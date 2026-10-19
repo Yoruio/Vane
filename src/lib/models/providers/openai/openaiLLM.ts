@@ -112,7 +112,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
                 return {
                   name: tc.function.name,
                   id: tc.id,
-                  arguments: JSON.parse(tc.function.arguments || '{}'),
+                  arguments: JSON.parse(tc.function.arguments.trim() || '{}'),
                 };
               }
             })
@@ -195,13 +195,16 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
                     arguments: tc.function?.arguments || '',
                   };
                   recievedToolCalls.push(call);
-                  return { ...call, arguments: parse(call.arguments || '{}') };
+                  return {
+                    ...call,
+                    arguments: parse(call.arguments.trim() || '{}'),
+                  };
                 } else {
                   const existingCall = recievedToolCalls[tc.index];
                   existingCall.arguments += tc.function?.arguments || '';
                   return {
                     ...existingCall,
-                    arguments: parse(existingCall.arguments || '{}'),
+                    arguments: parse(existingCall.arguments.trim() || '{}'),
                   };
                 }
               }) || [],
