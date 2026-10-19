@@ -32,7 +32,10 @@ COPY drizzle ./drizzle
 
 RUN mkdir /home/vane/uploads
 
-RUN yarn add playwright
+# Clear the download cache in the same layer as the install, or it is committed
+# with it: that layer measured 6.58 GB while the resulting node_modules is only
+# 1.9 GB, the remainder being /usr/local/share/.cache/yarn.
+RUN yarn add playwright && yarn cache clean
 RUN yarn playwright install --with-deps --only-shell chromium
 
 EXPOSE 3000
