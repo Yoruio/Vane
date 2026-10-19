@@ -43,8 +43,22 @@ class SessionManager {
   }
 
   emit(event: string, data: any) {
-    this.emitter.emit(event, data);
+    // Record before dispatching. subscribe() replays this log to late
+    // subscribers (that is how /api/reconnect/[id] resumes a session), so an
+    // event must be logged even if dispatching it throws.
     this.events.push({ event, data });
+
+    // Node's EventEmitter treats 'error' as special: emitting it with no
+    // listener attached throws ERR_UNHANDLED_ERROR. Sessions outlive their
+    // subscribers by design — the client may have disconnected, and route
+    // handlers call removeAllListeners() once a session ends — so a failure
+    // reported after that point is normal and must not become an exception.
+    // The event is already in the replay log above, so a reconnect still sees it.
+    if (event === 'error' && this.emitter.listenerCount('error') === 0) {
+      return;
+    }
+
+    this.emitter.emit(event, data);
   }
 
   emitBlock(block: Block) {
