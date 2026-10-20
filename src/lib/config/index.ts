@@ -87,6 +87,16 @@ class ConfigManager {
         default: true,
         scope: 'client',
       },
+      {
+        name: 'Capture model prompts and responses',
+        key: 'captureLlmText',
+        type: 'switch',
+        required: false,
+        description:
+          'Store the full prompt and response of every model call for debugging. Timing and size are always recorded; this adds the text, which is large — one search can make hundreds of calls. Leave off unless investigating something.',
+        default: false,
+        scope: 'server',
+      },
     ],
     personalization: [
       {

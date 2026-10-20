@@ -18,6 +18,28 @@ export const messages = sqliteTable('messages', {
   ),
 });
 
+// One row per model call. A single search makes hundreds of these (one
+// generateObject per scraped chunk), so the text columns are only populated
+// when the `captureLlmText` preference is on — see InstrumentedLLM.
+export const llmCalls = sqliteTable('llm_calls', {
+  id: integer('id').primaryKey(),
+  messageId: text('messageId'),
+  chatId: text('chatId'),
+  provider: text('provider'),
+  model: text('model'),
+  method: text('method').notNull(),
+  startedAt: text('startedAt').notNull(),
+  durationMs: integer('durationMs'),
+  // Streaming only: time to the first chunk, which is a separate question from
+  // total duration when comparing backends.
+  firstChunkMs: integer('firstChunkMs'),
+  inputChars: integer('inputChars'),
+  outputChars: integer('outputChars'),
+  inputText: text('inputText'),
+  outputText: text('outputText'),
+  error: text('error'),
+});
+
 interface DBFile {
   name: string;
   fileId: string;

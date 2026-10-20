@@ -128,7 +128,10 @@ export const POST = async (req: Request) => {
     const registry = new ModelRegistry();
 
     const [llm, embedding] = await Promise.all([
-      registry.loadChatModel(body.chatModel.providerId, body.chatModel.key),
+      registry.loadChatModel(body.chatModel.providerId, body.chatModel.key, {
+        messageId: body.message.messageId,
+        chatId: body.message.chatId,
+      }),
       registry.loadEmbeddingModel(
         body.embeddingModel.providerId,
         body.embeddingModel.key,
