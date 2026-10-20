@@ -139,6 +139,7 @@ const MessageBox = ({
               <div key={researchBlock.id} className="flex flex-col space-y-2">
                 <AssistantSteps
                   block={researchBlock}
+                  messageId={section.message.messageId}
                   status={section.message.status}
                   isLast={isLast}
                 />

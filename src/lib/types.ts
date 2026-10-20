@@ -115,6 +115,9 @@ export type ResearchProgress = {
   /* The client ticks elapsed time from this; the server never pushes per-second
    * updates. */
   startedAt: string;
+  /* Set when the loop ends, so a finished run can still report how long it
+   * took; without it a reopened chat has nothing to measure against. */
+  finishedAt?: string;
   mode: 'speed' | 'balanced' | 'quality';
   iteration: number;
   maxIterations: number;

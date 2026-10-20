@@ -208,8 +208,13 @@ class Researcher {
       });
     }
 
-    /* Also covers falling out of the loop with the budget exhausted. */
-    patchProgress(session, researchBlockId, (p) => (p.phase = 'done'));
+    /* Also covers falling out of the loop with the budget exhausted. Every
+     * break path falls through to here, so this is the one place finishedAt
+     * needs setting. */
+    patchProgress(session, researchBlockId, (p) => {
+      p.phase = 'done';
+      p.finishedAt = new Date().toISOString();
+    });
 
     const searchResults = actionOutput
       .filter((a) => a.type === 'search_results')

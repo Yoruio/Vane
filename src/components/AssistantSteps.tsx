@@ -63,10 +63,12 @@ const formatElapsed = (totalMs: number) => {
 
 const AssistantSteps = ({
   block,
+  messageId,
   status,
   isLast,
 }: {
   block: ResearchBlock;
+  messageId: string;
   status: 'answering' | 'completed' | 'error';
   isLast: boolean;
 }) => {
@@ -77,6 +79,44 @@ const AssistantSteps = ({
   const progress = block.data.progress;
   const isRunning = status === 'answering' && !researchEnded;
   const [now, setNow] = useState(() => Date.now());
+
+  /* A finished run measures to finishedAt; measuring to startedAt would render
+   * 0s every time an old chat is reopened. */
+  const elapsedMs = progress
+    ? (isRunning
+        ? now
+        : Date.parse(progress.finishedAt ?? progress.startedAt)) -
+      Date.parse(progress.startedAt)
+    : 0;
+
+  /* useChat polls this only while a run is live, so a reopened chat would show
+   * elapsed time with no model time beside it. Fetch it once instead. */
+  const [finishedStats, setFinishedStats] = useState<{
+    calls: number;
+    errors: number;
+    modelMs: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (isRunning || !progress) return;
+
+    let cancelled = false;
+
+    fetch(
+      `/api/debug/llm-calls?messageId=${encodeURIComponent(messageId)}&summary=1`,
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data.summary) setFinishedStats(data.summary);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRunning, messageId, progress]);
+
+  const stats = isRunning ? callStats : finishedStats;
 
   /* Elapsed is ticked here rather than pushed from the server, which only
    * sends startedAt once. */
@@ -137,10 +177,7 @@ const AssistantSteps = ({
           </span>
           <span>{progress.mode}</span>
           <span>
-            {formatElapsed(
-              (isRunning ? now : Date.parse(progress.startedAt)) -
-                Date.parse(progress.startedAt),
-            )}
+            {formatElapsed(elapsedMs)}
           </span>
           {progress.phase !== 'done' && <span>{progress.phase}</span>}
           {(progress.scrape.completed > 0 ||
@@ -163,12 +200,11 @@ const AssistantSteps = ({
               {progress.scrape.chunksDone}/{progress.scrape.chunksTotal} chunks
             </span>
           )}
-          {callStats && callStats.calls > 0 && (
+          {stats && stats.calls > 0 && (
             <span>
-              {callStats.calls} calls · {formatElapsed(callStats.modelMs)} in
-              model
-              {callStats.errors > 0 && (
-                <span className="text-red-500"> · {callStats.errors} failed</span>
+              {stats.calls} calls · {formatElapsed(stats.modelMs)} in model
+              {stats.errors > 0 && (
+                <span className="text-red-500"> · {stats.errors} failed</span>
               )}
             </span>
           )}
