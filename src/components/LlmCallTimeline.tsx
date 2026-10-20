@@ -26,6 +26,19 @@ interface CallDetail extends Omit<Call, 'hasText'> {
 
 /* One colour per method so the shape of a run is readable at a glance: a
  * research run is a wall of generateObject with a single streamText at the end. */
+/* The SDK method names are the mechanism, not the job: streamText is both the
+ * orchestrator and the writer, and generateObject is both the classifier and
+ * the chunk extractor. These label the call shape, which is all the stored row
+ * can tell us. */
+const methodLabel: Record<string, string> = {
+  generateText: 'Text',
+  streamText: 'Streamed text',
+  generateObject: 'Structured data',
+  streamObject: 'Streamed structured data',
+};
+
+const label = (method: string) => methodLabel[method] ?? method;
+
 const methodColor: Record<string, string> = {
   generateText: 'bg-sky-500',
   streamText: 'bg-emerald-500',
@@ -92,6 +105,16 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
   );
   const span = Math.max(tEnd - t0, 1);
 
+  /* Usually one model for the whole run, but a reconnect or a settings change
+   * mid-run can mix them, so show every distinct one rather than the first. */
+  const models = Array.from(
+    new Set(
+      calls
+        .map((c) => [c.provider, c.model].filter(Boolean).join(' / '))
+        .filter(Boolean),
+    ),
+  );
+
   if (calls.length === 0) return null;
 
   return (
@@ -100,19 +123,13 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
         {Object.entries(methodColor).map(([method, color]) => (
           <span key={method} className="flex items-center gap-1.5">
             <span className={`h-2.5 w-2.5 rounded-sm ${color}`} />
-            {method}
+            {label(method)}
           </span>
         ))}
-        {/* A composite swatch, because the two shades are one bar rather than
-          * two colours: the pale head is the wait before the first token and
-          * the solid tail is generation. Only streaming calls have it. */}
-        <span className="flex items-center gap-1.5">
-          <span className="relative h-2.5 w-8 rounded-sm overflow-hidden bg-emerald-500 opacity-80">
-            <span className="absolute inset-y-0 left-0 w-1/2 bg-white/50 dark:bg-black/40" />
-          </span>
-          pale = waiting for first token, solid = generating
+        <span className="ml-auto text-black/70 dark:text-white/70">
+          {models.join(', ')}
         </span>
-        <span className="ml-auto">
+        <span>
           {calls.length} calls over {ms(span)} wall clock
         </span>
       </div>
@@ -129,7 +146,7 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
             <button
               key={call.id}
               onClick={() => openCall(call.id)}
-              title={`${call.method} · ${ms(call.durationMs)} · ${chars(call.inputChars)} chars in`}
+              title={`${label(call.method)} · ${call.model ?? 'unknown model'} · ${ms(call.durationMs)} · ${chars(call.inputChars)} chars in`}
               className="relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group"
             >
               <span
@@ -167,7 +184,7 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
         >
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-lg">{detail.method}</div>
+              <div className="text-lg">{label(detail.method)}</div>
               <div className="text-sm text-black/60 dark:text-white/60">
                 {detail.provider ?? 'unknown provider'} ·{' '}
                 {detail.model ?? 'unknown model'} ·{' '}
