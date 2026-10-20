@@ -2,6 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import {
+  Activity,
   BookOpenText,
   Home,
   Search,
@@ -48,6 +49,12 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
       href: '/library',
       active: segments.includes('library'),
       label: 'Library',
+    },
+    {
+      icon: Activity,
+      href: '/debug/calls',
+      active: segments.includes('debug'),
+      label: 'Model calls',
     },
   ];
 
