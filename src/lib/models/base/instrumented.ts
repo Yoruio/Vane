@@ -7,6 +7,7 @@ import {
   GenerateTextInput,
   GenerateTextOutput,
   StreamTextOutput,
+  ToolCall,
 } from '../types';
 
 export type LLMCallContext = {
@@ -29,6 +30,16 @@ type Pending = {
 
 const serializeMessages = (messages: { role: string; content: string }[]) =>
   messages.map((m) => `[${m.role}] ${m.content}`).join('\n\n');
+
+/* An orchestrator call answers entirely in tool calls, so recording only the
+ * content would log it as having returned nothing. */
+const serializeToolCalls = (toolCalls: ToolCall[]) =>
+  toolCalls
+    .map((tc) => `[tool] ${tc.name}(${JSON.stringify(tc.arguments ?? {})})`)
+    .join('\n');
+
+const serializeOutput = (content: string, toolCalls: ToolCall[]) =>
+  [content, serializeToolCalls(toolCalls)].filter(Boolean).join('\n');
 
 /**
  * Wraps a BaseLLM and records one row per call. Implemented as a decorator so
@@ -88,7 +99,7 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
     const p = this.begin('generateText', serializeMessages(input.messages));
     try {
       const out = await this.inner.generateText(input);
-      await this.finish(p, out.content ?? '');
+      await this.finish(p, serializeOutput(out.content ?? '', out.toolCalls));
       return out;
     } catch (err) {
       await this.finish(p, '', err);
@@ -101,15 +112,26 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
   ): AsyncGenerator<StreamTextOutput> {
     const p = this.begin('streamText', serializeMessages(input.messages));
     let output = '';
+    /* Each chunk carries the whole accumulated state of the tool calls it
+     * touches, not a delta, so keep the latest per call rather than appending. */
+    const toolCalls = new Map<string, ToolCall>();
+
     try {
       for await (const chunk of this.inner.streamText(input)) {
         if (p.firstChunkMs === undefined) p.firstChunkMs = Date.now() - p.start;
         output += chunk.contentChunk ?? '';
+        chunk.toolCallChunk?.forEach((tc, index) =>
+          toolCalls.set(tc.id || tc.name || String(index), tc),
+        );
         yield chunk;
       }
-      await this.finish(p, output);
+      await this.finish(p, serializeOutput(output, [...toolCalls.values()]));
     } catch (err) {
-      await this.finish(p, output, err);
+      await this.finish(
+        p,
+        serializeOutput(output, [...toolCalls.values()]),
+        err,
+      );
       throw err;
     }
   }
