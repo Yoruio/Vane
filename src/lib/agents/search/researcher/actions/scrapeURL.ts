@@ -3,6 +3,7 @@ import { ResearchAction } from '../../types';
 import { Chunk, ReadingResearchBlock } from '@/lib/types';
 import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
+import { patchProgress } from '../progress';
 
 const extractorPrompt = `
                   Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
@@ -79,7 +80,36 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
     await Promise.all(
       params.urls.map(async (url) => {
         try {
-          const scraped = await Scraper.scrape(url);
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => {
+              p.phase = 'reading';
+              p.scrape.inFlight++;
+            },
+          );
+
+          /* finally, because scrape() can still throw before its own try
+           * (an uninitialised browser) and a leaked inFlight never recovers. */
+          let scraped;
+          try {
+            scraped = await Scraper.scrape(url);
+          } finally {
+            patchProgress(
+              additionalConfig.session,
+              additionalConfig.researchBlockId,
+              (p) => p.scrape.inFlight--,
+            );
+          }
+
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => {
+              if (scraped.ok) p.scrape.completed++;
+              else p.scrape.failed++;
+            },
+          );
 
           if (
             !readingEmitted &&
@@ -146,6 +176,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
 
           const chunks = splitText(scraped.content, 4000, 500);
 
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => (p.scrape.chunksTotal += chunks.length),
+          );
+
           let accumulatedContent = '';
 
           if (chunks.length > 1) {
@@ -169,6 +205,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
                   });
 
                   accumulatedContent += extracted.extracted_facts + '\n';
+
+                  patchProgress(
+                    additionalConfig.session,
+                    additionalConfig.researchBlockId,
+                    (p) => p.scrape.chunksDone++,
+                  );
                 }),
               );
             } catch (err) {
@@ -180,6 +222,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             }
           } else {
             accumulatedContent = scraped.content;
+
+            patchProgress(
+              additionalConfig.session,
+              additionalConfig.researchBlockId,
+              (p) => (p.scrape.chunksDone += chunks.length),
+            );
           }
 
           results.push({
@@ -190,6 +238,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             },
           });
         } catch (error) {
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => p.scrape.failed++,
+          );
+
           results.push({
             content: `Failed to fetch content from ${url}: ${error}`,
             metadata: {

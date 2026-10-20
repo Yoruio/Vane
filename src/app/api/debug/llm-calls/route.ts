@@ -44,6 +44,22 @@ const listRuns = async () => {
   return Response.json({ runs }, { status: 200 });
 };
 
+/* Aggregate for the live progress strip, which polls while a search runs: a
+ * long run has hundreds of rows and must not ship them all every few seconds.
+ * Covered by llm_calls_messageId_idx. */
+const summarizeCalls = async (messageId: string) => {
+  const [summary] = await db
+    .select({
+      calls: sql<number>`count(*)`,
+      errors: sql<number>`sum(case when ${llmCalls.error} is null then 0 else 1 end)`,
+      modelMs: sql<number>`sum(coalesce(${llmCalls.durationMs}, 0))`,
+    })
+    .from(llmCalls)
+    .where(eq(llmCalls.messageId, messageId));
+
+  return Response.json({ summary }, { status: 200 });
+};
+
 const listCalls = async (messageId: string) => {
   const calls = await db
     .select(callSummary)
@@ -73,6 +89,7 @@ export const GET = async (req: Request) => {
     const messageId = params.get('messageId');
 
     if (callId) return getCall(Number(callId));
+    if (messageId && params.get('summary')) return summarizeCalls(messageId);
     if (messageId) return listCalls(messageId);
     return listRuns();
   } catch (err) {

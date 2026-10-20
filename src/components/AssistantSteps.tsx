@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { ResearchBlock, ResearchBlockSubStep } from '@/lib/types';
 import { useChat } from '@/lib/hooks/useChat';
+import { cn } from '@/lib/utils';
 
 const getStepIcon = (step: ResearchBlockSubStep) => {
   if (step.type === 'reasoning') {
@@ -52,6 +53,14 @@ const getStepTitle = (
   return 'Processing';
 };
 
+const formatElapsed = (totalMs: number) => {
+  const seconds = Math.max(Math.floor(totalMs / 1000), 0);
+
+  if (seconds < 60) return `${seconds}s`;
+
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+};
+
 const AssistantSteps = ({
   block,
   status,
@@ -64,7 +73,19 @@ const AssistantSteps = ({
   const [isExpanded, setIsExpanded] = useState(
     isLast && status === 'answering' ? true : false,
   );
-  const { researchEnded, loading } = useChat();
+  const { researchEnded, loading, callStats } = useChat();
+  const progress = block.data.progress;
+  const isRunning = status === 'answering' && !researchEnded;
+  const [now, setNow] = useState(() => Date.now());
+
+  /* Elapsed is ticked here rather than pushed from the server, which only
+   * sends startedAt once. */
+  useEffect(() => {
+    if (!isRunning || !progress) return;
+
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [isRunning, progress?.startedAt]);
 
   useEffect(() => {
     if (researchEnded && isLast) {
@@ -74,7 +95,11 @@ const AssistantSteps = ({
     }
   }, [researchEnded, status]);
 
-  if (!block || block.data.subSteps.length === 0) return null;
+  /* Progress alone is enough to render: speed mode emits no sub-steps at all
+   * (__reasoning_preamble is disabled there), and every mode has a gap before
+   * the first one arrives. */
+  if (!block || (block.data.subSteps.length === 0 && !block.data.progress))
+    return null;
 
   return (
     <div className="rounded-lg bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 overflow-hidden">
@@ -95,6 +120,60 @@ const AssistantSteps = ({
           <ChevronDown className="w-4 h-4 text-black/70 dark:text-white/70" />
         )}
       </button>
+
+      {progress && (
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-3 text-xs',
+            status === 'error'
+              ? 'text-red-500'
+              : 'text-black/70 dark:text-white/70',
+          )}
+        >
+          <span className="text-black dark:text-white">
+            {progress.phase === 'done'
+              ? 'Finishing'
+              : `Iteration ${progress.iteration}/${progress.maxIterations}`}
+          </span>
+          <span>{progress.mode}</span>
+          <span>
+            {formatElapsed(
+              (isRunning ? now : Date.parse(progress.startedAt)) -
+                Date.parse(progress.startedAt),
+            )}
+          </span>
+          {progress.phase !== 'done' && <span>{progress.phase}</span>}
+          {(progress.scrape.completed > 0 ||
+            progress.scrape.failed > 0 ||
+            progress.scrape.inFlight > 0) && (
+            <span>
+              {progress.scrape.completed} read
+              {progress.scrape.failed > 0 && (
+                <span className="text-red-500">
+                  {' '}
+                  ({progress.scrape.failed} failed)
+                </span>
+              )}
+              {progress.scrape.inFlight > 0 &&
+                ` · ${progress.scrape.inFlight} in flight`}
+            </span>
+          )}
+          {progress.scrape.chunksTotal > 0 && (
+            <span>
+              {progress.scrape.chunksDone}/{progress.scrape.chunksTotal} chunks
+            </span>
+          )}
+          {callStats && callStats.calls > 0 && (
+            <span>
+              {callStats.calls} calls · {formatElapsed(callStats.modelMs)} in
+              model
+              {callStats.errors > 0 && (
+                <span className="text-red-500"> · {callStats.errors} failed</span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
 
       <AnimatePresence>
         {isExpanded && (

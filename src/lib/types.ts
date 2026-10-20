@@ -107,11 +107,34 @@ export type ResearchBlockSubStep =
   | UploadSearchingResearchBlock
   | UploadSearchResultsResearchBlock;
 
+/* Live status of a run, carried inside the research block rather than on a
+ * channel of its own: the chat route forwards only 'block', 'updateBlock' and
+ * 'researchComplete', and session.subscribe() replays block snapshots, so
+ * anything outside a block is dropped on reconnect. */
+export type ResearchProgress = {
+  /* The client ticks elapsed time from this; the server never pushes per-second
+   * updates. */
+  startedAt: string;
+  mode: 'speed' | 'balanced' | 'quality';
+  iteration: number;
+  maxIterations: number;
+  phase: 'planning' | 'searching' | 'reading' | 'done';
+  scrape: {
+    inFlight: number;
+    completed: number;
+    failed: number;
+    chunksDone: number;
+    chunksTotal: number;
+  };
+};
+
 export type ResearchBlock = {
   id: string;
   type: 'research';
   data: {
     subSteps: ResearchBlockSubStep[];
+    /* Optional so a block persisted before this existed still parses. */
+    progress?: ResearchProgress;
   };
 };
 

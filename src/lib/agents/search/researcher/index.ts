@@ -5,6 +5,7 @@ import SessionManager from '@/lib/session';
 import { Message, ReasoningResearchBlock } from '@/lib/types';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
 import { ToolCall } from '@/lib/models/types';
+import { patchProgress } from './progress';
 
 class Researcher {
   async research(
@@ -41,6 +42,20 @@ class Researcher {
       type: 'research',
       data: {
         subSteps: [],
+        progress: {
+          startedAt: new Date().toISOString(),
+          mode: input.config.mode,
+          iteration: 0,
+          maxIterations: maxIteration,
+          phase: 'planning',
+          scrape: {
+            inFlight: 0,
+            completed: 0,
+            failed: 0,
+            chunksDone: 0,
+            chunksTotal: 0,
+          },
+        },
       },
     });
 
@@ -57,6 +72,11 @@ class Researcher {
     ];
 
     for (let i = 0; i < maxIteration; i++) {
+      patchProgress(session, researchBlockId, (p) => {
+        p.iteration = i + 1;
+        p.phase = 'planning';
+      });
+
       const researcherPrompt = getResearcherPrompt(
         availableActionsDescription,
         input.config.mode,
@@ -147,11 +167,15 @@ class Researcher {
         }
       }
 
+      /* Three ways out of this loop and they look identical to the browser
+       * otherwise: no tool calls, the done tool, or the budget running out. */
       if (finalToolCalls.length === 0) {
+        patchProgress(session, researchBlockId, (p) => (p.phase = 'done'));
         break;
       }
 
       if (finalToolCalls[finalToolCalls.length - 1].name === 'done') {
+        patchProgress(session, researchBlockId, (p) => (p.phase = 'done'));
         break;
       }
 
@@ -160,6 +184,8 @@ class Researcher {
         content: '',
         tool_calls: finalToolCalls,
       });
+
+      patchProgress(session, researchBlockId, (p) => (p.phase = 'searching'));
 
       const actionResults = await ActionRegistry.executeAll(finalToolCalls, {
         llm: input.config.llm,
@@ -181,6 +207,9 @@ class Researcher {
         });
       });
     }
+
+    /* Also covers falling out of the loop with the budget exhausted. */
+    patchProgress(session, researchBlockId, (p) => (p.phase = 'done'));
 
     const searchResults = actionOutput
       .filter((a) => a.type === 'search_results')

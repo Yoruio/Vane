@@ -28,6 +28,15 @@ export type Section = {
   suggestions?: string[];
 };
 
+/* Aggregate of the llm_calls rows for the running message, polled while a
+ * search is in flight. Read from the telemetry API rather than pushed, so the
+ * agent and the instrumentation decorator stay decoupled from the UI. */
+type CallStats = {
+  calls: number;
+  errors: number;
+  modelMs: number;
+};
+
 type ChatContext = {
   messages: Message[];
   sections: Section[];
@@ -46,6 +55,7 @@ type ChatContext = {
   chatModelProvider: ChatModelProvider;
   embeddingModelProvider: EmbeddingModelProvider;
   researchEnded: boolean;
+  callStats: CallStats | null;
   setResearchEnded: (ended: boolean) => void;
   setOptimizationMode: (mode: string) => void;
   setSources: (sources: string[]) => void;
@@ -256,6 +266,7 @@ export const chatContext = createContext<ChatContext>({
   chatModelProvider: { key: '', providerId: '' },
   embeddingModelProvider: { key: '', providerId: '' },
   researchEnded: false,
+  callStats: null,
   rewrite: () => {},
   sendMessage: async () => {},
   setFileIds: () => {},
@@ -280,9 +291,55 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [messageAppeared, setMessageAppeared] = useState(false);
 
   const [researchEnded, setResearchEnded] = useState(false);
+  const [callStats, setCallStats] = useState<CallStats | null>(null);
 
   const chatHistory = useRef<[string, string][]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+
+  const activeMessageId = useMemo(
+    () =>
+      [...messages].reverse().find((m) => m.status === 'answering')?.messageId,
+    [messages],
+  );
+
+  /* Poll the telemetry aggregate while a search is running so the research
+   * panel can show call count and time spent in the model. Stops as soon as
+   * the run ends; 2s is frequent enough to look live without hammering the
+   * database on a multi-hour quality run. */
+  useEffect(() => {
+    if (!loading || researchEnded) {
+      setCallStats(null);
+      return;
+    }
+
+    if (!activeMessageId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/debug/llm-calls?messageId=${encodeURIComponent(activeMessageId)}&summary=1`,
+        );
+        const data = await res.json();
+        if (!cancelled && data.summary) setCallStats(data.summary);
+      } catch {
+        /* A failed poll is cosmetic; keep the last value and try again. */
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    /* Depends on the id, not on `messages`: that array changes on every
+     * streamed block, which would re-create the interval and re-poll each
+     * time. */
+  }, [loading, researchEnded, activeMessageId]);
+
 
   const [files, setFiles] = useState<File[]>([]);
   const [fileIds, setFileIds] = useState<string[]>([]);
@@ -833,6 +890,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         embeddingModelProvider,
         setEmbeddingModelProvider,
         researchEnded,
+        callStats,
         setResearchEnded,
       }}
     >

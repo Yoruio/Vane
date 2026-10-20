@@ -46,9 +46,12 @@ class Scraper {
     }, this.IDLE_KILL_TIMEOUT);
   }
 
+  /* `ok` distinguishes a real page from the placeholder returned on failure.
+   * Without it callers cannot tell the two apart, because this method resolves
+   * either way rather than throwing. */
   static async scrape(
     url: string,
-  ): Promise<{ content: string; title: string }> {
+  ): Promise<{ content: string; title: string; ok: boolean }> {
     await this.initBrowser();
 
     if (!this.browser) throw new Error('Browser not initialized');
@@ -93,6 +96,7 @@ class Scraper {
         ${content?.textContent?.trim() ?? 'No content available'}
         `,
         title,
+        ok: true,
       };
     } catch (err) {
       console.log(`Error scraping ${url}:`, err);
@@ -100,6 +104,7 @@ class Scraper {
       return {
         title: 'Failed to scrape',
         content: `# ${url}\n\nError scraping content.`,
+        ok: false,
       };
     } finally {
       this.userCount--;

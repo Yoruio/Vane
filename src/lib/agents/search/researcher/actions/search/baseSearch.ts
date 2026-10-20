@@ -8,6 +8,22 @@ import computeSimilarity from '@/lib/utils/computeSimilarity';
 import z from 'zod';
 import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
+import { patchProgress } from '../../progress';
+
+/* The sub-step is display-only, and the UI reads just the url and title.
+ * Emitting the pipeline's own objects would ship metadata.embedding -- a full
+ * float vector per result -- to the browser, and because every research patch
+ * replaces the whole subSteps array it would be re-sent on every later update.
+ * The vectors cannot simply be deleted earlier: `similarity` is still needed to
+ * sort, so strip a copy instead. */
+const toDisplayChunk = (chunk: Chunk): Chunk => ({
+  content: chunk.content,
+  metadata: {
+    url: chunk.metadata.url,
+    title: chunk.metadata.title,
+  },
+});
+
 
 export const executeSearch = async (input: {
   queries: string[];
@@ -94,7 +110,7 @@ export const executeSearch = async (input: {
         researchBlock.data.subSteps.push({
           id: searchResultsBlockId,
           type: 'search_results',
-          reading: resultChunks,
+          reading: resultChunks.map(toDisplayChunk),
         });
 
         input.session.updateBlock(researchBlock.id, [
@@ -113,7 +129,7 @@ export const executeSearch = async (input: {
           subStepIndex
         ] as SearchResultsResearchBlock;
 
-        subStep.reading.push(...resultChunks);
+        subStep.reading.push(...resultChunks.map(toDisplayChunk));
 
         input.session.updateBlock(researchBlock.id, [
           {
@@ -204,7 +220,7 @@ export const executeSearch = async (input: {
         researchBlock.data.subSteps.push({
           id: searchResultsBlockId,
           type: 'search_results',
-          reading: resultChunks,
+          reading: resultChunks.map(toDisplayChunk),
         });
 
         input.session.updateBlock(researchBlock.id, [
@@ -223,7 +239,7 @@ export const executeSearch = async (input: {
           subStepIndex
         ] as SearchResultsResearchBlock;
 
-        subStep.reading.push(...resultChunks);
+        subStep.reading.push(...resultChunks.map(toDisplayChunk));
 
         input.session.updateBlock(researchBlock.id, [
           {
@@ -306,7 +322,7 @@ export const executeSearch = async (input: {
       researchBlock.data.subSteps.push({
         id: crypto.randomUUID(),
         type: 'reading',
-        reading: filteredResults,
+        reading: filteredResults.map(toDisplayChunk),
       });
 
       input.session.updateBlock(researchBlock.id, [
@@ -365,16 +381,45 @@ export const executeSearch = async (input: {
     await Promise.all(
       filteredResults.map(async (result, i) => {
         try {
-          const scrapedData = await Scraper.scrape(result.metadata.url).catch(
-            (err) => {
-              console.log('Error scraping data from', result.metadata.url, err);
-            },
-          );
+          patchProgress(input.session, researchBlock.id, (p) => {
+            p.phase = 'reading';
+            p.scrape.inFlight++;
+          });
+
+          let scrapedData;
+          try {
+            scrapedData = await Scraper.scrape(result.metadata.url).catch(
+              (err) => {
+                console.log(
+                  'Error scraping data from',
+                  result.metadata.url,
+                  err,
+                );
+              },
+            );
+          } finally {
+            patchProgress(
+              input.session,
+              researchBlock.id,
+              (p) => p.scrape.inFlight--,
+            );
+          }
+
+          patchProgress(input.session, researchBlock.id, (p) => {
+            if (scrapedData?.ok) p.scrape.completed++;
+            else p.scrape.failed++;
+          });
 
           if (!scrapedData) return;
 
           let accumulatedContent = '';
           const chunks = splitText(scrapedData.content, 4000, 500);
+
+          patchProgress(
+            input.session,
+            researchBlock.id,
+            (p) => (p.scrape.chunksTotal += chunks.length),
+          );
 
           await Promise.all(
             chunks.map(async (chunk) => {
@@ -396,6 +441,12 @@ export const executeSearch = async (input: {
                 });
 
                 accumulatedContent += extractorOutput.extracted_facts + '\n';
+
+                patchProgress(
+                  input.session,
+                  researchBlock.id,
+                  (p) => p.scrape.chunksDone++,
+                );
               } catch (err) {
                 console.log('Error extracting information from chunk', err);
               }

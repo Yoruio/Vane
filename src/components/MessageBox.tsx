@@ -131,7 +131,9 @@ const MessageBox = ({
           {section.message.responseBlocks
             .filter(
               (block): block is ResearchBlock =>
-                block.type === 'research' && block.data.subSteps.length > 0,
+                block.type === 'research' &&
+                /* Progress alone is enough; speed mode never emits sub-steps. */
+                (block.data.subSteps.length > 0 || !!block.data.progress),
             )
             .map((researchBlock) => (
               <div key={researchBlock.id} className="flex flex-col space-y-2">
@@ -147,7 +149,9 @@ const MessageBox = ({
             loading &&
             !researchEnded &&
             !section.message.responseBlocks.some(
-              (b) => b.type === 'research' && b.data.subSteps.length > 0,
+              (b) =>
+                b.type === 'research' &&
+                (b.data.subSteps.length > 0 || !!b.data.progress),
             ) && (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200">
                 <Disc3 className="w-4 h-4 text-black dark:text-white animate-spin" />
