@@ -3,6 +3,7 @@ import BaseLLM from '../../models/base/llm';
 import BaseEmbedding from '@/lib/models/base/embedding';
 import SessionManager from '@/lib/session';
 import { ChatTurnMessage, Chunk } from '@/lib/types';
+import { CallContext } from '@/lib/telemetry';
 
 export type SearchSources = 'web' | 'discussions' | 'academic';
 
@@ -66,6 +67,9 @@ export type AdditionalConfig = {
   llm: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
   session: SessionManager;
+  /* So search and scrape timings can be attributed to the same message as the
+   * model calls, and land on one timeline. */
+  callContext?: CallContext;
 };
 
 export type ResearcherInput = {
@@ -73,6 +77,7 @@ export type ResearcherInput = {
   followUp: string;
   classification: ClassifierOutput;
   config: SearchAgentConfig;
+  callContext?: CallContext;
 };
 
 export type ResearcherOutput = {

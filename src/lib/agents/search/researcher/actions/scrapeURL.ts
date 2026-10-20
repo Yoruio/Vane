@@ -4,6 +4,7 @@ import { Chunk, ReadingResearchBlock } from '@/lib/types';
 import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
 import { patchProgress } from '../progress';
+import { timeCall } from '@/lib/telemetry';
 
 const extractorPrompt = `
                   Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
@@ -93,7 +94,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
            * (an uninitialised browser) and a leaked inFlight never recovers. */
           let scraped;
           try {
-            scraped = await Scraper.scrape(url);
+            scraped = await timeCall(
+              additionalConfig.callContext,
+              { kind: 'scrape', method: 'playwright', label: url },
+              () => Scraper.scrape(url),
+              (r) => (r.ok ? `${r.content.length} chars` : 'failed'),
+            );
           } finally {
             patchProgress(
               additionalConfig.session,

@@ -9,6 +9,7 @@ import z from 'zod';
 import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
 import { patchProgress } from '../../progress';
+import { CallContext, timeCall } from '@/lib/telemetry';
 
 /* The sub-step is display-only, and the UI reads just the url and title.
  * Emitting the pipeline's own objects would ship metadata.embedding -- a full
@@ -33,6 +34,7 @@ export const executeSearch = async (input: {
   session: InstanceType<typeof SessionManager>;
   llm: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
+  callContext?: CallContext;
 }) => {
   const researchBlock = input.researchBlock;
 
@@ -57,9 +59,15 @@ export const executeSearch = async (input: {
     const results: Chunk[] = [];
 
     const search = async (q: string) => {
-      const res = await searchSearxng(q, {
-        ...(input.searchConfig ? input.searchConfig : {}),
-      });
+      const res = await timeCall(
+        input.callContext,
+        { kind: 'search', method: 'searxng', label: q },
+        () =>
+          searchSearxng(q, {
+            ...(input.searchConfig ? input.searchConfig : {}),
+          }),
+        (r) => `${r.results.length} results`,
+      );
 
       let resultChunks: Chunk[] = [];
 
@@ -192,9 +200,15 @@ export const executeSearch = async (input: {
     const searchResults: Chunk[] = [];
 
     const search = async (q: string) => {
-      const res = await searchSearxng(q, {
-        ...(input.searchConfig ? input.searchConfig : {}),
-      });
+      const res = await timeCall(
+        input.callContext,
+        { kind: 'search', method: 'searxng', label: q },
+        () =>
+          searchSearxng(q, {
+            ...(input.searchConfig ? input.searchConfig : {}),
+          }),
+        (r) => `${r.results.length} results`,
+      );
 
       let resultChunks: Chunk[] = [];
 
@@ -388,14 +402,22 @@ export const executeSearch = async (input: {
 
           let scrapedData;
           try {
-            scrapedData = await Scraper.scrape(result.metadata.url).catch(
-              (err) => {
-                console.log(
-                  'Error scraping data from',
-                  result.metadata.url,
-                  err,
-                );
+            scrapedData = await timeCall(
+              input.callContext,
+              {
+                kind: 'scrape',
+                method: 'playwright',
+                label: result.metadata.url,
               },
+              () =>
+                Scraper.scrape(result.metadata.url).catch((err) => {
+                  console.log(
+                    'Error scraping data from',
+                    result.metadata.url,
+                    err,
+                  );
+                }),
+              (r) => (r?.ok ? `${r.content.length} chars` : 'failed'),
             );
           } finally {
             patchProgress(

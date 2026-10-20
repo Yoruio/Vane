@@ -27,6 +27,11 @@ export const llmCalls = sqliteTable('llm_calls', {
   chatId: text('chatId'),
   provider: text('provider'),
   model: text('model'),
+  /* 'model', 'search' or 'scrape'. Null on rows written before the column
+   * existed, which were all model calls. */
+  kind: text('kind'),
+  /* What the span was about: the query for a search, the URL for a scrape. */
+  label: text('label'),
   method: text('method').notNull(),
   startedAt: text('startedAt').notNull(),
   durationMs: integer('durationMs'),

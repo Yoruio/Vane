@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 interface Call {
   id: number;
+  kind: string | null;
+  label: string | null;
   provider: string | null;
   model: string | null;
   method: string;
@@ -37,7 +39,29 @@ const methodLabel: Record<string, string> = {
   streamObject: 'Streamed structured data',
 };
 
-const label = (method: string) => methodLabel[method] ?? method;
+const kindLabel: Record<string, string> = {
+  search: 'Search',
+  scrape: 'Page fetch',
+};
+
+/* kind wins where it is set: a search span's method is the engine, not one of
+ * the model call shapes. */
+const label = (call: { kind?: string | null; method: string }) =>
+  (call.kind && kindLabel[call.kind]) ??
+  methodLabel[call.method] ??
+  call.method;
+
+const kindColor: Record<string, string> = {
+  search: 'bg-blue-400',
+  scrape: 'bg-orange-400',
+};
+
+const barColor = (call: Call) =>
+  call.error
+    ? 'bg-red-500'
+    : ((call.kind ? kindColor[call.kind] : undefined) ??
+      methodColor[call.method] ??
+      'bg-gray-500');
 
 const methodColor: Record<string, string> = {
   generateText: 'bg-sky-500',
@@ -123,7 +147,13 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
         {Object.entries(methodColor).map(([method, color]) => (
           <span key={method} className="flex items-center gap-1.5">
             <span className={`h-2.5 w-2.5 rounded-sm ${color}`} />
-            {label(method)}
+            {methodLabel[method] ?? method}
+          </span>
+        ))}
+        {Object.entries(kindColor).map(([kind, color]) => (
+          <span key={kind} className="flex items-center gap-1.5">
+            <span className={`h-2.5 w-2.5 rounded-sm ${color}`} />
+            {kindLabel[kind]}
           </span>
         ))}
         <span className="ml-auto text-black/70 dark:text-white/70">
@@ -146,15 +176,13 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
             <button
               key={call.id}
               onClick={() => openCall(call.id)}
-              title={`${label(call.method)} · ${call.model ?? 'unknown model'} · ${ms(call.durationMs)} · ${chars(call.inputChars)} chars in`}
+              title={`${label(call)} · ${call.label ?? call.model ?? ''} · ${ms(call.durationMs)}`}
               className="relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group"
             >
               <span
-                className={`absolute top-1 h-3 rounded-sm overflow-hidden ${
-                  call.error
-                    ? 'bg-red-500'
-                    : (methodColor[call.method] ?? 'bg-gray-500')
-                } opacity-80 group-hover:opacity-100`}
+                className={`absolute top-1 h-3 rounded-sm overflow-hidden ${barColor(
+                  call,
+                )} opacity-80 group-hover:opacity-100`}
                 style={{
                   left: `${offset * 100}%`,
                   width: `${width * 100}%`,
@@ -184,11 +212,13 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
         >
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-lg">{label(detail.method)}</div>
+              <div className="text-lg">{label(detail)}</div>
               <div className="text-sm text-black/60 dark:text-white/60">
-                {detail.provider ?? 'unknown provider'} ·{' '}
-                {detail.model ?? 'unknown model'} ·{' '}
-                {new Date(detail.startedAt).toLocaleString()}
+                {/* A search or scrape span has no provider or model; its label
+                  * is the query or the URL. */}
+                {detail.label ??
+                  `${detail.provider ?? 'unknown provider'} / ${detail.model ?? 'unknown model'}`}{' '}
+                · {new Date(detail.startedAt).toLocaleString()}
               </div>
             </div>
             <button onClick={() => setDetail(null)}>

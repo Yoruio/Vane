@@ -1,7 +1,6 @@
 import z from 'zod';
 import BaseLLM from './llm';
-import db from '@/lib/db';
-import { llmCalls } from '@/lib/db/schema';
+import { CallContext, recordCall } from '@/lib/telemetry';
 import {
   GenerateObjectInput,
   GenerateTextInput,
@@ -10,16 +9,10 @@ import {
   ToolCall,
 } from '../types';
 
-export type LLMCallContext = {
-  messageId?: string;
-  chatId?: string;
+export type LLMCallContext = CallContext & {
   provider?: string;
   model?: string;
-  /** Persist the full prompt and response. Off by default: a single search can
-   *  make hundreds of calls with ~4000-token prompts. */
-  captureText?: boolean;
 };
-
 type Pending = {
   method: string;
   startedAt: string;
@@ -68,31 +61,18 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
   }
 
   private async finish(p: Pending, outputText: string, error?: unknown) {
-    try {
-      await db.insert(llmCalls).values({
-        messageId: this.ctx.messageId,
-        chatId: this.ctx.chatId,
-        provider: this.ctx.provider,
-        model: this.ctx.model,
-        method: p.method,
-        startedAt: p.startedAt,
-        durationMs: Date.now() - p.start,
-        firstChunkMs: p.firstChunkMs,
-        inputChars: p.inputText.length,
-        outputChars: outputText.length,
-        inputText: this.ctx.captureText ? p.inputText : null,
-        outputText: this.ctx.captureText ? outputText : null,
-        error:
-          error === undefined
-            ? null
-            : error instanceof Error
-              ? error.message
-              : String(error),
-      });
-    } catch (err) {
-      // Telemetry must never break a search.
-      console.error('Failed to record llm call:', err);
-    }
+    await recordCall(this.ctx, {
+      kind: 'model',
+      method: p.method,
+      provider: this.ctx.provider,
+      model: this.ctx.model,
+      startedAt: p.startedAt,
+      durationMs: Date.now() - p.start,
+      firstChunkMs: p.firstChunkMs,
+      inputText: p.inputText,
+      outputText,
+      error,
+    });
   }
 
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {

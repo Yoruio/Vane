@@ -9,6 +9,7 @@ import { messages } from '@/lib/db/schema';
 import { and, eq, gt } from 'drizzle-orm';
 import { TextBlock } from '@/lib/types';
 import { getTokenCount } from '@/lib/utils/splitText';
+import configManager from '@/lib/config';
 
 class SearchAgent {
   async searchAsync(session: SessionManager, input: SearchAgentInput) {
@@ -87,6 +88,15 @@ class SearchAgent {
         followUp: input.followUp,
         classification: classification,
         config: input.config,
+        /* Same key the model registry reads when it wraps the chat model; read
+         * here too rather than importing it through the telemetry module,
+         * which everything else imports. */
+        callContext: {
+          messageId: input.messageId,
+          chatId: input.chatId,
+          captureText:
+            configManager.getConfig('debug.captureLlmText', false) === true,
+        },
       });
     }
 

@@ -1,13 +1,20 @@
 import db from '@/lib/db';
 import { llmCalls, messages } from '@/lib/db/schema';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 
 export const dynamic = 'force-dynamic';
 
 /* The text columns hold whole prompts, so they are never selected for a list —
  * only for the single call the user opened. */
+/* The table now holds search and scrape spans too, so anything reporting "time
+ * in model" has to exclude them. Rows written before the kind column existed
+ * are null and were all model calls. */
+const isModelSpan = or(eq(llmCalls.kind, 'model'), isNull(llmCalls.kind));
+
 const callSummary = {
   id: llmCalls.id,
+  kind: llmCalls.kind,
+  label: llmCalls.label,
   provider: llmCalls.provider,
   model: llmCalls.model,
   method: llmCalls.method,
@@ -31,7 +38,7 @@ const listRuns = async () => {
       errors: sql<number>`sum(case when ${llmCalls.error} is null then 0 else 1 end)`,
       startedAt: sql<string>`min(${llmCalls.startedAt})`,
       lastStartedAt: sql<string>`max(${llmCalls.startedAt})`,
-      modelMs: sql<number>`sum(coalesce(${llmCalls.durationMs}, 0))`,
+      modelMs: sql<number>`sum(case when ${llmCalls.kind} is null or ${llmCalls.kind} = 'model' then coalesce(${llmCalls.durationMs}, 0) else 0 end)`,
       inputChars: sql<number>`sum(coalesce(${llmCalls.inputChars}, 0))`,
       outputChars: sql<number>`sum(coalesce(${llmCalls.outputChars}, 0))`,
     })
@@ -55,7 +62,7 @@ const summarizeCalls = async (messageId: string) => {
       modelMs: sql<number>`sum(coalesce(${llmCalls.durationMs}, 0))`,
     })
     .from(llmCalls)
-    .where(eq(llmCalls.messageId, messageId));
+    .where(and(eq(llmCalls.messageId, messageId), isModelSpan));
 
   return Response.json({ summary }, { status: 200 });
 };
