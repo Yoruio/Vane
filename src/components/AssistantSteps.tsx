@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Activity,
   Brain,
   Search,
   FileText,
@@ -13,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { ResearchBlock, ResearchBlockSubStep } from '@/lib/types';
 import { useChat } from '@/lib/hooks/useChat';
 import { cn } from '@/lib/utils';
+import LlmCallTimeline from './LlmCallTimeline';
 
 const getStepIcon = (step: ResearchBlockSubStep) => {
   if (step.type === 'reasoning') {
@@ -79,6 +81,7 @@ const AssistantSteps = ({
   const progress = block.data.progress;
   const isRunning = status === 'answering' && !researchEnded;
   const [now, setNow] = useState(() => Date.now());
+  const [showCalls, setShowCalls] = useState(false);
 
   /* A finished run measures to finishedAt; measuring to startedAt would render
    * 0s every time an old chat is reopened. */
@@ -376,6 +379,35 @@ const AssistantSteps = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {stats && stats.calls > 0 && (
+        <div className="border-t border-light-200 dark:border-dark-200">
+          <button
+            onClick={() => setShowCalls(!showCalls)}
+            className="w-full flex items-center justify-between p-3 hover:bg-light-200 dark:hover:bg-dark-200 transition duration-200"
+          >
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-black dark:text-white" />
+              <span className="text-sm font-medium text-black dark:text-white">
+                Model calls ({stats.calls})
+              </span>
+            </div>
+            {showCalls ? (
+              <ChevronUp className="w-4 h-4 text-black/70 dark:text-white/70" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-black/70 dark:text-white/70" />
+            )}
+          </button>
+
+          {/* Mounted only when open: it fetches every call row for the message,
+            * and a chat can hold many of these panels. */}
+          {showCalls && (
+            <div className="px-3 pb-3">
+              <LlmCallTimeline messageId={messageId} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
