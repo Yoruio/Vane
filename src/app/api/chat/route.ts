@@ -135,6 +135,7 @@ export const POST = async (req: Request) => {
       registry.loadEmbeddingModel(
         body.embeddingModel.providerId,
         body.embeddingModel.key,
+        { messageId: body.message.messageId, chatId: body.message.chatId },
       ),
     ]);
 

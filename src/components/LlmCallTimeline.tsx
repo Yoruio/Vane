@@ -42,6 +42,7 @@ const methodLabel: Record<string, string> = {
 const kindLabel: Record<string, string> = {
   search: 'Search',
   scrape: 'Page fetch',
+  embed: 'Embedding',
 };
 
 /* kind wins where it is set: a search span's method is the engine, not one of
@@ -54,6 +55,7 @@ const label = (call: { kind?: string | null; method: string }) =>
 const kindColor: Record<string, string> = {
   search: 'bg-blue-400',
   scrape: 'bg-orange-400',
+  embed: 'bg-teal-400',
 };
 
 const barColor = (call: Call) =>

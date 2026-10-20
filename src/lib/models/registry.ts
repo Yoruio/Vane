@@ -5,6 +5,7 @@ import { providers } from './providers';
 import { MinimalProvider, ModelList } from './types';
 import configManager from '../config';
 import InstrumentedLLM from './base/instrumented';
+import InstrumentedEmbedding from './base/instrumentedEmbedding';
 
 class ModelRegistry {
   activeProviders: (ConfigModelProvider & {
@@ -99,14 +100,27 @@ class ModelRegistry {
     });
   }
 
-  async loadEmbeddingModel(providerId: string, modelName: string) {
+  /* Same opt-in as loadChatModel: embedding is a real cost in a run -- every
+   * search result gets embedded -- and it was the last work missing from the
+   * timeline. */
+  async loadEmbeddingModel(
+    providerId: string,
+    modelName: string,
+    callContext?: { messageId?: string; chatId?: string },
+  ) {
     const provider = this.activeProviders.find((p) => p.id === providerId);
 
     if (!provider) throw new Error('Invalid provider id');
 
     const model = await provider.provider.loadEmbeddingModel(modelName);
 
-    return model;
+    if (!callContext) return model;
+
+    return new InstrumentedEmbedding(model, {
+      ...callContext,
+      provider: provider.name,
+      model: modelName,
+    });
   }
 
   async addProvider(
