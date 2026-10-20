@@ -2,6 +2,7 @@ import { Dialog, DialogPanel } from '@headlessui/react';
 import {
   ArrowLeft,
   BrainCog,
+  Bug,
   ChevronLeft,
   ExternalLink,
   Search,
@@ -18,6 +19,7 @@ import Models from './Sections/Models/Section';
 import SearchSection from './Sections/Search';
 import Select from '@/components/ui/Select';
 import Personalization from './Sections/Personalization';
+import Debug from './Sections/Debug';
 
 const sections = [
   {
@@ -51,6 +53,14 @@ const sections = [
     icon: Search,
     component: SearchSection,
     dataAdd: 'search',
+  },
+  {
+    key: 'debug',
+    name: 'Debug',
+    description: 'Diagnostics for investigating how a search behaved.',
+    icon: Bug,
+    component: Debug,
+    dataAdd: 'debug',
   },
 ];
 

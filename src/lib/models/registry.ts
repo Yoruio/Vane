@@ -95,7 +95,7 @@ class ModelRegistry {
       provider: provider.name,
       model: modelName,
       captureText:
-        configManager.getConfig('preferences.captureLlmText', false) === true,
+        configManager.getConfig('debug.captureLlmText', false) === true,
     });
   }
 

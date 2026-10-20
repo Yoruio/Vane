@@ -20,7 +20,7 @@ export const messages = sqliteTable('messages', {
 
 // One row per model call. A single search makes hundreds of these (one
 // generateObject per scraped chunk), so the text columns are only populated
-// when the `captureLlmText` preference is on — see InstrumentedLLM.
+// when the `debug.captureLlmText` setting is on — see InstrumentedLLM.
 export const llmCalls = sqliteTable('llm_calls', {
   id: integer('id').primaryKey(),
   messageId: text('messageId'),

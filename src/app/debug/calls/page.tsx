@@ -102,8 +102,10 @@ const Page = () => {
 
   return (
     <div className="flex flex-col gap-6 pt-10 px-2 pb-16">
-      <div className="flex items-center border-b border-light-200/20 dark:border-dark-200/20 pb-6">
-        <Activity size={40} className="mb-2.5" />
+      {/* Centered below lg, left from lg up — matches the Library header, whose
+          wrapper flips to lg:justify-between at that breakpoint. */}
+      <div className="flex items-center justify-center lg:justify-start border-b border-light-200/20 dark:border-dark-200/20 pb-6">
+        <Activity size={45} className="mb-2.5" />
         <div className="flex flex-col">
           <h1
             className="text-5xl font-normal p-2 pb-0"
@@ -111,7 +113,7 @@ const Page = () => {
           >
             Model calls
           </h1>
-          <div className="px-2 text-sm text-black/60 dark:text-white/60">
+          <div className="px-2 text-sm text-black/60 dark:text-white/60 text-center lg:text-left">
             Every call a run made, on a wall-clock timeline. Click a bar to
             inspect it.
           </div>
@@ -127,7 +129,7 @@ const Page = () => {
           No calls recorded yet. Timing is always recorded; prompts and
           responses need{' '}
           <span className="font-medium">Capture model prompts and responses</span>{' '}
-          switched on in settings.
+          switched on under Settings → Debug.
         </div>
       )}
 
@@ -285,8 +287,8 @@ const Page = () => {
                 <span className="font-medium">
                   Capture model prompts and responses
                 </span>{' '}
-                in settings and re-run; it only applies to calls made after it
-                is enabled.
+                under Settings → Debug and re-run; it only applies to calls made
+                after it is enabled.
               </div>
             ) : (
               <>
