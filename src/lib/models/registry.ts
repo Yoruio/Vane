@@ -120,6 +120,8 @@ class ModelRegistry {
       ...callContext,
       provider: provider.name,
       model: modelName,
+      captureText:
+        configManager.getConfig('debug.captureLlmText', false) === true,
     });
   }
 
