@@ -32,6 +32,10 @@ export const llmCalls = sqliteTable('llm_calls', {
   kind: text('kind'),
   /* What the span was about: the query for a search, the URL for a scrape. */
   label: text('label'),
+  /* The job the call did -- classifier, orchestrator, picker, extractor,
+   * writer, widget. `method` is only the SDK mechanism, and several roles share
+   * one, so this is what makes a timeline readable. */
+  role: text('role'),
   method: text('method').notNull(),
   startedAt: text('startedAt').notNull(),
   durationMs: integer('durationMs'),

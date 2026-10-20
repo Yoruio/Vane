@@ -7,6 +7,7 @@ interface Call {
   id: number;
   kind: string | null;
   label: string | null;
+  role: string | null;
   provider: string | null;
   model: string | null;
   method: string;
@@ -45,9 +46,25 @@ const kindLabel: Record<string, string> = {
   embed: 'Embedding',
 };
 
-/* kind wins where it is set: a search span's method is the engine, not one of
- * the model call shapes. */
-const label = (call: { kind?: string | null; method: string }) =>
+const roleLabel: Record<string, string> = {
+  classifier: 'Classifier',
+  orchestrator: 'Orchestrator',
+  picker: 'Result picker',
+  extractor: 'Extractor',
+  writer: 'Writer',
+  widget: 'Widget',
+};
+
+/* Role first, because it is the only one of the three that says what the call
+ * was for: the orchestrator and the writer are both streamText, and the
+ * classifier and the extractor are both generateObject. Then kind, since a
+ * search span's method is the engine rather than a model call shape. */
+const label = (call: {
+  role?: string | null;
+  kind?: string | null;
+  method: string;
+}) =>
+  (call.role && (roleLabel[call.role] ?? call.role)) ??
   (call.kind && kindLabel[call.kind]) ??
   methodLabel[call.method] ??
   call.method;

@@ -12,6 +12,7 @@ import {
 export type LLMCallContext = CallContext & {
   provider?: string;
   model?: string;
+  role?: string;
 };
 type Pending = {
   method: string;
@@ -51,6 +52,13 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
     super(undefined as unknown as CONFIG);
   }
 
+  /* Returns a wrapper around the same underlying model that tags its rows with
+   * a role. Cheap -- no provider state is copied -- so call sites can do it
+   * inline per call. */
+  withRole(role: string): InstrumentedLLM<CONFIG> {
+    return new InstrumentedLLM(this.inner, { ...this.ctx, role });
+  }
+
   private begin(method: string, inputText: string): Pending {
     return {
       method,
@@ -64,6 +72,7 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
     await recordCall(this.ctx, {
       kind: 'model',
       method: p.method,
+      role: this.ctx.role,
       provider: this.ctx.provider,
       model: this.ctx.model,
       startedAt: p.startedAt,
@@ -146,5 +155,12 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
     }
   }
 }
+
+/**
+ * Tags a model's telemetry with the job it is doing. A no-op when the model is
+ * not instrumented, so call sites need no conditional.
+ */
+export const withRole = <T extends BaseLLM<any>>(llm: T, role: string): T =>
+  llm instanceof InstrumentedLLM ? (llm.withRole(role) as unknown as T) : llm;
 
 export default InstrumentedLLM;

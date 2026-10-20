@@ -5,6 +5,7 @@ import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
 import { patchProgress } from '../progress';
 import { timeCall } from '@/lib/telemetry';
+import { withRole } from '@/lib/models/base/instrumented';
 
 const extractorPrompt = `
                   Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
@@ -194,7 +195,10 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             try {
               await Promise.all(
                 chunks.map(async (chunk) => {
-                  const extracted = await additionalConfig.llm.generateObject<
+                  const extracted = await withRole(
+                    additionalConfig.llm,
+                    'extractor',
+                  ).generateObject<
                     typeof extractorSchema
                   >({
                     messages: [

@@ -10,6 +10,7 @@ import { and, eq, gt } from 'drizzle-orm';
 import { TextBlock } from '@/lib/types';
 import { getTokenCount } from '@/lib/utils/splitText';
 import configManager from '@/lib/config';
+import { withRole } from '@/lib/models/base/instrumented';
 
 class SearchAgent {
   async searchAsync(session: SessionManager, input: SearchAgentInput) {
@@ -135,7 +136,7 @@ class SearchAgent {
       input.config.mode,
     );
 
-    const answerStream = input.config.llm.streamText({
+    const answerStream = withRole(input.config.llm, 'writer').streamText({
       messages: [
         {
           role: 'system',

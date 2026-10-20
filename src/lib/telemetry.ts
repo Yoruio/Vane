@@ -14,6 +14,7 @@ export type CallContext = {
 type CallRow = {
   kind: CallKind;
   method: string;
+  role?: string;
   startedAt: string;
   durationMs: number;
   label?: string;
@@ -41,6 +42,7 @@ export const recordCall = async (ctx: CallContext, row: CallRow) => {
       chatId: ctx.chatId,
       kind: row.kind,
       label: row.label,
+      role: row.role,
       provider: row.provider,
       model: row.model,
       method: row.method,

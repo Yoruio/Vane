@@ -2,6 +2,7 @@ import z from 'zod';
 import { ClassifierInput } from './types';
 import { classifierPrompt } from '@/lib/prompts/search/classifier';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
+import { withRole } from '@/lib/models/base/instrumented';
 
 const schema = z.object({
   classification: z.object({
@@ -35,7 +36,9 @@ const schema = z.object({
 });
 
 export const classify = async (input: ClassifierInput) => {
-  const output = await input.llm.generateObject<typeof schema>({
+  const output = await withRole(input.llm, 'classifier').generateObject<
+    typeof schema
+  >({
     messages: [
       {
         role: 'system',

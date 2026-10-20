@@ -15,6 +15,7 @@ const callSummary = {
   id: llmCalls.id,
   kind: llmCalls.kind,
   label: llmCalls.label,
+  role: llmCalls.role,
   provider: llmCalls.provider,
   model: llmCalls.model,
   method: llmCalls.method,

@@ -10,6 +10,7 @@ import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
 import { patchProgress } from '../../progress';
 import { CallContext, timeCall } from '@/lib/telemetry';
+import { withRole } from '@/lib/models/base/instrumented';
 
 /* The sub-step is display-only, and the UI reads just the url and title.
  * Emitting the pipeline's own objects would ship metadata.embedding -- a full
@@ -299,7 +300,10 @@ export const executeSearch = async (input: {
         ),
     });
 
-    const pickerResponse = await input.llm.generateObject<typeof pickerSchema>({
+    const pickerResponse = await withRole(
+      input.llm,
+      'picker',
+    ).generateObject<typeof pickerSchema>({
       schema: pickerSchema,
       messages: [
         {
@@ -446,7 +450,10 @@ export const executeSearch = async (input: {
           await Promise.all(
             chunks.map(async (chunk) => {
               try {
-                const extractorOutput = await input.llm.generateObject<
+                const extractorOutput = await withRole(
+                  input.llm,
+                  'extractor',
+                ).generateObject<
                   typeof extractorSchema
                 >({
                   schema: extractorSchema,

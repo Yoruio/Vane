@@ -6,6 +6,7 @@ import { Message, ReasoningResearchBlock } from '@/lib/types';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
 import { ToolCall } from '@/lib/models/types';
 import { patchProgress } from './progress';
+import { withRole } from '@/lib/models/base/instrumented';
 
 class Researcher {
   async research(
@@ -85,7 +86,10 @@ class Researcher {
         input.config.fileIds,
       );
 
-      const actionStream = input.config.llm.streamText({
+      const actionStream = withRole(
+        input.config.llm,
+        'orchestrator',
+      ).streamText({
         messages: [
           {
             role: 'system',
