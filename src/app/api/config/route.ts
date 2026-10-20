@@ -5,7 +5,7 @@ import { ConfigModelProvider } from '@/lib/config/types';
 
 type SaveConfigBody = {
   key: string;
-  value: string;
+  value: unknown;
 };
 
 export const GET = async (req: NextRequest) => {
@@ -46,7 +46,9 @@ export const POST = async (req: NextRequest) => {
   try {
     const body: SaveConfigBody = await req.json();
 
-    if (!body.key || !body.value) {
+    /* Test for presence, not truthiness: `false` and `''` are values a field
+     * can legitimately be set to, and a switch cannot be turned off otherwise. */
+    if (!body.key || body.value === undefined || body.value === null) {
       return Response.json(
         {
           message: 'Key and value are required.',
