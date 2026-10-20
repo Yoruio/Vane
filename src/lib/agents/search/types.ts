@@ -13,6 +13,9 @@ export type SearchAgentConfig = {
   embedding: BaseEmbedding<any>;
   mode: 'speed' | 'balanced' | 'quality';
   systemInstructions: string;
+  // Identity of `llm` above, for recording which model answered. The loaded
+  // model instance does not expose this.
+  chatModel?: { provider: string; model: string };
 };
 
 export type SearchAgentInput = {

@@ -28,6 +28,8 @@ class SearchAgent {
         createdAt: new Date().toISOString(),
         status: 'answering',
         responseBlocks: [],
+        provider: input.config.chatModel?.provider,
+        model: input.config.chatModel?.model,
       });
     } else {
       await db
@@ -42,6 +44,9 @@ class SearchAgent {
           status: 'answering',
           backendId: session.id,
           responseBlocks: [],
+          // A re-run may use a different model than the original attempt.
+          provider: input.config.chatModel?.provider,
+          model: input.config.chatModel?.model,
         })
         .where(
           and(

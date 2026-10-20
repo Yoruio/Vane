@@ -135,6 +135,12 @@ export const POST = async (req: Request) => {
       ),
     ]);
 
+    // Resolve the provider's display name so the stored row survives a later
+    // rename or removal; fall back to the raw id if it cannot be resolved.
+    const chatProvider = registry.activeProviders.find(
+      (p) => p.id === body.chatModel.providerId,
+    );
+
     const history: ChatTurnMessage[] = body.history.map((msg) => {
       if (msg[0] === 'human') {
         return {
@@ -223,6 +229,10 @@ export const POST = async (req: Request) => {
           mode: body.optimizationMode,
           fileIds: body.files,
           systemInstructions: body.systemInstructions || 'None',
+          chatModel: {
+            provider: chatProvider?.name || body.chatModel.providerId,
+            model: body.chatModel.key,
+          },
         },
       })
       .catch((err) => {

@@ -16,6 +16,11 @@ export const messages = sqliteTable('messages', {
   status: text({ enum: ['answering', 'completed', 'error'] }).default(
     'answering',
   ),
+  // Which chat model answered. Stored as resolved values rather than the
+  // provider id so a row stays readable after a provider is renamed or
+  // removed from the config. Null for messages written before 0003.
+  provider: text('provider'),
+  model: text('model'),
 });
 
 interface DBFile {
