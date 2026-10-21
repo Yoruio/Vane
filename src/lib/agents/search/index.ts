@@ -12,6 +12,30 @@ import { getTokenCount } from '@/lib/utils/splitText';
 import configManager from '@/lib/config';
 import { withRole } from '@/lib/models/base/instrumented';
 
+/* A generous ceiling rather than a tight one: a reasoning model spends part of
+ * its budget thinking before it answers, so a tight cap would turn a slow
+ * answer into no answer. This exists to stop an unbounded run, not to shape
+ * the response. */
+const WRITER_MAX_TOKENS = 8192;
+
+/* A quantised model can collapse into emitting one character forever. Observed
+ * on 2026-10-21: 26,407 '?' characters streamed over 54 minutes, stored as the
+ * answer. The idle timeout cannot catch it because tokens keep arriving, and
+ * grammar-constrained calls fail loudly while free text like this does not. */
+const MAX_REPEATED_CHARS = 300;
+
+/* The trailing run of one repeated character in `text`, and whether the whole
+ * chunk is that character -- which is what decides if a run carries over from
+ * the previous chunk. */
+const trailingRun = (text: string) => {
+  const char = text[text.length - 1];
+  let run = 0;
+
+  while (run < text.length && text[text.length - 1 - run] === char) run++;
+
+  return { char, run, wholeChunk: run === text.length };
+};
+
 class SearchAgent {
   async searchAsync(session: SessionManager, input: SearchAgentInput) {
     const exists = await db.query.messages.findFirst({
@@ -137,6 +161,7 @@ class SearchAgent {
     );
 
     const answerStream = withRole(input.config.llm, 'writer').streamText({
+      options: { maxTokens: WRITER_MAX_TOKENS },
       messages: [
         {
           role: 'system',
@@ -152,7 +177,28 @@ class SearchAgent {
 
     let responseBlockId = '';
 
+    let repeatRun = 0;
+    let lastChar = '';
+    let degenerated = false;
+
     for await (const chunk of answerStream) {
+      const text = chunk.contentChunk ?? '';
+
+      if (text) {
+        const { char, run, wholeChunk } = trailingRun(text);
+
+        repeatRun = wholeChunk && char === lastChar ? repeatRun + run : run;
+        lastChar = char;
+
+        if (repeatRun >= MAX_REPEATED_CHARS) {
+          console.error(
+            `Writer degenerated: ${repeatRun} repetitions of ${JSON.stringify(lastChar)}; stopping.`,
+          );
+          degenerated = true;
+          break;
+        }
+      }
+
       if (!responseBlockId) {
         const block: TextBlock = {
           id: crypto.randomUUID(),
@@ -178,6 +224,19 @@ class SearchAgent {
             path: '/data',
             value: block.data,
           },
+        ]);
+      }
+    }
+
+    if (degenerated) {
+      const block = session.getBlock(responseBlockId) as TextBlock | null;
+
+      if (block) {
+        block.data +=
+          '\n\n_The model began repeating itself, so the answer was stopped here._';
+
+        session.updateBlock(block.id, [
+          { op: 'replace', path: '/data', value: block.data },
         ]);
       }
     }
