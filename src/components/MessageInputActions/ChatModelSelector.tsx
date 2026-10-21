@@ -83,6 +83,13 @@ const ModelSelector = () => {
           return;
         }
 
+        /* A context warning outlives the load message: it is a configuration
+         * problem the user has to act on, not a progress report. */
+        if (result.warning) {
+          toast.warning(result.warning, { id: toastId, duration: 10000 });
+          return;
+        }
+
         if (result.alreadyLoaded) {
           toast.success(`${modelKey} is already loaded`, {
             id: toastId,

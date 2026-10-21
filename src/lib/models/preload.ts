@@ -7,6 +7,11 @@ import { CallContext, recordCall } from '@/lib/telemetry';
 type Preloadable = {
   isModelLoaded: (modelName: string) => Promise<boolean>;
   loadModel: (modelName: string) => Promise<boolean>;
+  getSlotInfo?: (modelName: string) => Promise<{
+    slots: number;
+    contextSize: number;
+    contextPerSlot: number;
+  } | null>;
 };
 
 const asPreloadable = (provider: unknown): Preloadable | null =>
@@ -23,6 +28,38 @@ export type PreloadResult = {
   alreadyLoaded: boolean;
   loaded: boolean;
   durationMs: number;
+  slots?: number;
+  contextPerSlot?: number;
+  /* Set when the per-slot window looks too small for what a search sends. */
+  warning?: string;
+};
+
+/* The extractor splits scraped pages into 4000-token chunks, and the writer
+ * prompt is of the same order, so a slot needs room for that plus its own
+ * output and the chat history. Below this the model will start truncating. */
+const CHUNK_TOKENS = 4000;
+const MIN_SLOT_CONTEXT = CHUNK_TOKENS * 2;
+
+const slotWarning = (slots: number, contextPerSlot: number) => {
+  if (slots <= 1 || contextPerSlot >= MIN_SLOT_CONTEXT) return undefined;
+
+  return (
+    `${slots} parallel slots leave only ${contextPerSlot.toLocaleString()} tokens each. ` +
+    `A search sends prompts of around ${CHUNK_TOKENS.toLocaleString()} tokens, so requests may be truncated. ` +
+    `Reduce --parallel or raise --ctx-size.`
+  );
+};
+
+const slotFields = async (provider: Preloadable, modelName: string) => {
+  const info = await provider.getSlotInfo?.(modelName);
+
+  if (!info) return {};
+
+  return {
+    slots: info.slots,
+    contextPerSlot: info.contextPerSlot,
+    warning: slotWarning(info.slots, info.contextPerSlot),
+  };
 };
 
 /**
@@ -55,6 +92,7 @@ export const preloadModel = async (
       alreadyLoaded: true,
       loaded: true,
       durationMs: Date.now() - start,
+      ...(await slotFields(provider, modelName)),
     };
   }
 
@@ -65,6 +103,7 @@ export const preloadModel = async (
     alreadyLoaded: false,
     loaded,
     durationMs: Date.now() - start,
+    ...(await slotFields(provider, modelName)),
   };
 };
 
@@ -86,6 +125,10 @@ export const ensureModelReady = async (
   const result = await preloadModel(providerId, modelName);
 
   if (!result.supported) return result;
+
+  /* Logged as well as returned: a search can start without anyone having
+   * touched the model dropdown, so the toast is not guaranteed to be seen. */
+  if (result.warning) console.warn(`Model context warning: ${result.warning}`);
 
   await recordCall(ctx, {
     kind: 'load',

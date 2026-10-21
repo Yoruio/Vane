@@ -93,6 +93,43 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     }
   }
 
+  /**
+   * How the resident model was launched: how many request slots it has and how
+   * much context each one gets.
+   *
+   * llama-server divides --ctx-size between --parallel slots, so raising
+   * parallelism shrinks the window available to any single request. Reported
+   * rather than judged -- what counts as too small depends on what the caller
+   * intends to send.
+   */
+  async getSlotInfo(modelName: string): Promise<{
+    slots: number;
+    contextSize: number;
+    contextPerSlot: number;
+  } | null> {
+    const record = await this.loadedRecord(modelName);
+
+    if (!record) return null;
+
+    const args: string[] = record.launch_command ?? [];
+    const valueOf = (flag: string) => {
+      const i = args.indexOf(flag);
+      return i === -1 ? undefined : Number(args[i + 1]);
+    };
+
+    const contextSize =
+      valueOf('--ctx-size') ?? record.max_context_window ?? 0;
+    const slots = valueOf('--parallel') ?? 1;
+
+    if (!contextSize || !slots) return null;
+
+    return {
+      slots,
+      contextSize,
+      contextPerSlot: Math.floor(contextSize / slots),
+    };
+  }
+
   async isModelLoaded(modelName: string): Promise<boolean> {
     const record = await this.loadedRecord(modelName);
 
