@@ -130,20 +130,53 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     };
   }
 
+  /* Whether every flag we asked for is present in what the server actually
+   * launched, ignoring order and any extras it added itself. */
+  private hasArgs(record: any): boolean {
+    const wanted = (this.config.llamacppArgs ?? '').trim().split(/\s+/);
+    const actual: string[] = (record.launch_command ?? []).map(String);
+    const reported = String(record.recipe_options?.llamacpp_args ?? '')
+      .trim()
+      .split(/\s+/);
+    const haystack = new Set([...actual, ...reported]);
+
+    /* Flags come as "--flag value" pairs; require the value to sit directly
+     * after its flag rather than merely appearing somewhere. */
+    for (let i = 0; i < wanted.length; i++) {
+      if (!wanted[i].startsWith('--')) continue;
+
+      const value = wanted[i + 1]?.startsWith('--') ? undefined : wanted[i + 1];
+
+      if (!haystack.has(wanted[i])) return false;
+
+      if (value !== undefined) {
+        const atIdx = actual.indexOf(wanted[i]);
+        const inReported = reported.indexOf(wanted[i]);
+        const matches =
+          (atIdx !== -1 && actual[atIdx + 1] === value) ||
+          (inReported !== -1 && reported[inReported + 1] === value);
+
+        if (!matches) return false;
+      }
+    }
+
+    return true;
+  }
+
   async isModelLoaded(modelName: string): Promise<boolean> {
     const record = await this.loadedRecord(modelName);
 
     if (!record) return false;
 
-    /* Resident but launched with different arguments counts as not ready, or
-     * configuring them here would silently do nothing whenever the model
-     * happened to already be up. */
-    if (
-      this.config.llamacppArgs &&
-      record.recipe_options?.llamacpp_args !== this.config.llamacppArgs
-    ) {
-      return false;
-    }
+    /* Resident but launched without the configured arguments counts as not
+     * ready, or setting them would silently do nothing whenever the model
+     * happened to already be up.
+     *
+     * Containment, not equality: Lemonade merges what we send with the
+     * server's own defaults, so asking for "--parallel 4" comes back as
+     * "--parallel 4 --spec-type draft-mtp". Comparing the whole string never
+     * matches, which made every single search unload and reload the model. */
+    if (this.config.llamacppArgs && !this.hasArgs(record)) return false;
 
     return true;
   }
@@ -171,6 +204,9 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
         headers: this.managementHeaders(),
         body: JSON.stringify({
           model_name: modelName,
+          /* A reload would otherwise silently unpin a model someone pinned
+           * deliberately to keep it resident. */
+          ...(record?.pinned ? { pinned: true } : {}),
           /* Only sent when configured, so the server keeps its own defaults
            * otherwise. Note the load endpoint reports success even for keys it
            * ignores, so check /health to confirm it took effect. */
