@@ -196,6 +196,10 @@ class Researcher {
         embedding: input.config.embedding,
         session: session,
         callContext: input.callContext,
+        /* The standalone rewrite rather than the raw follow-up, so a question
+         * like "what about the newer one?" still carries its subject. */
+        query:
+          input.classification.standaloneFollowUp || input.followUp,
         researchBlockId: researchBlockId,
         fileIds: input.config.fileIds,
         mode: input.config.mode,

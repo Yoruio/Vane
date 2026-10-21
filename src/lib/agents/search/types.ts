@@ -70,6 +70,10 @@ export type AdditionalConfig = {
   /* So search and scrape timings can be attributed to the same message as the
    * model calls, and land on one timeline. */
   callContext?: CallContext;
+  /* What the user actually asked, for actions that extract from a page: the
+   * extractor compresses a chunk to a few hundred characters and needs to know
+   * what to keep. */
+  query?: string;
 };
 
 export type ResearcherInput = {

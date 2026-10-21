@@ -208,7 +208,11 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
                       },
                       {
                         role: 'user',
-                        content: `<queries>Summarize</queries>\n<scraped_data>${chunk}</scraped_data>`,
+                        /* The sibling extractor in baseSearch passes the real
+                         * queries; this one sent the literal "Summarize", so a
+                         * chunk was compressed by a model that did not know
+                         * what had been asked. */
+                        content: `<queries>${additionalConfig.query ?? 'Summarize'}</queries>\n<scraped_data>${chunk}</scraped_data>`,
                       },
                     ],
                     schema: extractorSchema,
