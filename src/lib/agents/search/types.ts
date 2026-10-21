@@ -88,6 +88,10 @@ export type ResearcherInput = {
   classification: ClassifierOutput;
   config: SearchAgentConfig;
   callContext?: CallContext;
+  /* The agent creates the block before classification so the status line covers
+   * the whole run. Optional because the API agent has no block of its own; the
+   * researcher makes one when it is not given. */
+  researchBlockId?: string;
 };
 
 export type ResearcherOutput = {

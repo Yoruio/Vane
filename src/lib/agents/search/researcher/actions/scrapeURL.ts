@@ -6,6 +6,7 @@ import { patchProgress } from '../progress';
 import { timeCall } from '@/lib/telemetry';
 import { withRole } from '@/lib/models/base/instrumented';
 import { splitScrapedContent } from '../chunking';
+import { hostOf } from '../progress';
 
 const extractorPrompt = `
                   Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
@@ -88,6 +89,10 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             (p) => {
               p.phase = 'reading';
               p.scrape.inFlight++;
+              /* Host rather than the full URL: this is a one-line status, and a
+               * long URL pushes the counters off the end of it. */
+              p.current = `Reading ${hostOf(url)}`;
+              p.currentSince = new Date().toISOString();
             },
           );
 

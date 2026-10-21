@@ -173,10 +173,25 @@ const AssistantSteps = ({
               : 'text-black/70 dark:text-white/70',
           )}
         >
-          <span className="text-black dark:text-white">
+          {/* The status line leads, because it is the thing a waiting user wants:
+            * what is happening right now, and for how long. */}
+          {isRunning && progress.current && (
+            <span className="flex items-center gap-1.5 text-black dark:text-white">
+              <span className="h-1.5 w-1.5 rounded-full bg-black/60 dark:bg-white/60 animate-pulse" />
+              {progress.current}
+              {progress.currentSince && (
+                <span className="text-black/50 dark:text-white/50">
+                  {formatElapsed(now - Date.parse(progress.currentSince))}
+                </span>
+              )}
+            </span>
+          )}
+          <span className="text-black/70 dark:text-white/70">
             {progress.phase === 'done'
               ? 'Finishing'
-              : `Iteration ${progress.iteration}/${progress.maxIterations}`}
+              : progress.maxIterations > 0
+                ? `Step ${progress.iteration}/${progress.maxIterations}`
+                : 'Starting'}
           </span>
           <span>{progress.mode}</span>
           <span>

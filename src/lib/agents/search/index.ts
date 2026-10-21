@@ -11,6 +11,7 @@ import { TextBlock } from '@/lib/types';
 import { getTokenCount } from '@/lib/utils/splitText';
 import configManager from '@/lib/config';
 import { withRole } from '@/lib/models/base/instrumented';
+import { setCurrent } from './researcher/progress';
 
 /* A generous ceiling rather than a tight one: a reasoning model spends part of
  * its budget thinking before it answers, so a tight cap would turn a slow
@@ -78,6 +79,35 @@ class SearchAgent {
         .execute();
     }
 
+    /* Created here rather than inside the researcher so the status line covers
+     * the classifier too -- on a local model that call alone can run 30s, and
+     * until now the UI could only say "Brainstorming...". */
+    const researchBlockId = crypto.randomUUID();
+
+    session.emitBlock({
+      id: researchBlockId,
+      type: 'research',
+      data: {
+        subSteps: [],
+        progress: {
+          startedAt: new Date().toISOString(),
+          mode: input.config.mode,
+          iteration: 0,
+          maxIterations: 0,
+          phase: 'planning',
+          current: 'Working out what to search for',
+          currentSince: new Date().toISOString(),
+          scrape: {
+            inFlight: 0,
+            completed: 0,
+            failed: 0,
+            chunksDone: 0,
+            chunksTotal: 0,
+          },
+        },
+      },
+    });
+
     const classification = await classify({
       chatHistory: input.chatHistory,
       enabledSources: input.config.sources,
@@ -113,6 +143,7 @@ class SearchAgent {
         followUp: input.followUp,
         classification: classification,
         config: input.config,
+        researchBlockId,
         /* Same key the model registry reads when it wraps the chat model; read
          * here too rather than importing it through the telemetry module,
          * which everything else imports. */
@@ -159,6 +190,8 @@ class SearchAgent {
       input.config.systemInstructions,
       input.config.mode,
     );
+
+    setCurrent(session, researchBlockId, 'writing', 'Writing the answer');
 
     const answerStream = withRole(input.config.llm, 'writer').streamText({
       options: { maxTokens: WRITER_MAX_TOKENS },
@@ -227,6 +260,8 @@ class SearchAgent {
         ]);
       }
     }
+
+    setCurrent(session, researchBlockId, 'done', undefined);
 
     if (degenerated) {
       const block = session.getBlock(responseBlockId) as TextBlock | null;

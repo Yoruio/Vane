@@ -5,7 +5,7 @@ import SessionManager from '@/lib/session';
 import { Message, ReasoningResearchBlock } from '@/lib/types';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
 import { ToolCall } from '@/lib/models/types';
-import { patchProgress } from './progress';
+import { patchProgress, setCurrent } from './progress';
 import { withRole } from '@/lib/models/base/instrumented';
 
 class Researcher {
@@ -36,29 +36,38 @@ class Researcher {
         sources: input.config.sources,
       });
 
-    const researchBlockId = crypto.randomUUID();
+    const researchBlockId = input.researchBlockId ?? crypto.randomUUID();
 
-    session.emitBlock({
-      id: researchBlockId,
-      type: 'research',
-      data: {
-        subSteps: [],
-        progress: {
-          startedAt: new Date().toISOString(),
-          mode: input.config.mode,
-          iteration: 0,
-          maxIterations: maxIteration,
-          phase: 'planning',
-          scrape: {
-            inFlight: 0,
-            completed: 0,
-            failed: 0,
-            chunksDone: 0,
-            chunksTotal: 0,
+    if (session.getBlock(researchBlockId)) {
+      /* The agent created it before classification, so the status line could
+       * cover that call too; only the budget is still unknown at that point. */
+      patchProgress(session, researchBlockId, (p) => {
+        p.maxIterations = maxIteration;
+      });
+    } else {
+      /* No block handed in -- the API agent does not make one -- so own it. */
+      session.emitBlock({
+        id: researchBlockId,
+        type: 'research',
+        data: {
+          subSteps: [],
+          progress: {
+            startedAt: new Date().toISOString(),
+            mode: input.config.mode,
+            iteration: 0,
+            maxIterations: maxIteration,
+            phase: 'planning',
+            scrape: {
+              inFlight: 0,
+              completed: 0,
+              failed: 0,
+              chunksDone: 0,
+              chunksTotal: 0,
+            },
           },
         },
-      },
-    });
+      });
+    }
 
     const agentMessageHistory: Message[] = [
       {
@@ -76,6 +85,8 @@ class Researcher {
       patchProgress(session, researchBlockId, (p) => {
         p.iteration = i + 1;
         p.phase = 'planning';
+        p.current = `Deciding what to do next (step ${i + 1} of ${maxIteration})`;
+        p.currentSince = new Date().toISOString();
       });
 
       const researcherPrompt = getResearcherPrompt(
@@ -189,7 +200,18 @@ class Researcher {
         tool_calls: finalToolCalls,
       });
 
-      patchProgress(session, researchBlockId, (p) => (p.phase = 'searching'));
+      /* finalToolCalls is known before anything runs, so the status line can
+       * name the actual tools rather than a generic phase. */
+      const toolNames = Array.from(
+        new Set(finalToolCalls.map((tc) => tc.name).filter(Boolean)),
+      ).filter((name) => name !== '__reasoning_preamble');
+
+      setCurrent(
+        session,
+        researchBlockId,
+        'searching',
+        toolNames.length ? `Running ${toolNames.join(', ')}` : 'Working',
+      );
 
       const actionResults = await ActionRegistry.executeAll(finalToolCalls, {
         llm: input.config.llm,

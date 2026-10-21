@@ -121,7 +121,14 @@ export type ResearchProgress = {
   mode: 'speed' | 'balanced' | 'quality';
   iteration: number;
   maxIterations: number;
-  phase: 'planning' | 'searching' | 'reading' | 'done';
+  phase: 'planning' | 'searching' | 'reading' | 'writing' | 'done';
+  /* What is happening right now, for a status line. The telemetry cannot answer
+   * this: a row is written when a call finishes, so an in-flight call does not
+   * exist in it yet. */
+  current?: string;
+  /* When the current activity started, so the client can age it without the
+   * server pushing updates. */
+  currentSince?: string;
   scrape: {
     inFlight: number;
     completed: number;
