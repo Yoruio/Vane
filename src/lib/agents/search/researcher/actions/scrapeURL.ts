@@ -2,10 +2,10 @@ import z from 'zod';
 import { ResearchAction } from '../../types';
 import { Chunk, ReadingResearchBlock } from '@/lib/types';
 import Scraper from '@/lib/scraper';
-import { splitText } from '@/lib/utils/splitText';
 import { patchProgress } from '../progress';
 import { timeCall } from '@/lib/telemetry';
 import { withRole } from '@/lib/models/base/instrumented';
+import { splitScrapedContent } from '../chunking';
 
 const extractorPrompt = `
                   Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
@@ -181,7 +181,7 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             );
           }
 
-          const chunks = splitText(scraped.content, 4000, 500);
+          const chunks = splitScrapedContent(scraped.content);
 
           patchProgress(
             additionalConfig.session,

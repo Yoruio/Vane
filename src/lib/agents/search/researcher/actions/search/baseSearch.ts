@@ -7,10 +7,10 @@ import { SearchAgentConfig } from '../../../types';
 import computeSimilarity from '@/lib/utils/computeSimilarity';
 import z from 'zod';
 import Scraper from '@/lib/scraper';
-import { splitText } from '@/lib/utils/splitText';
 import { patchProgress } from '../../progress';
 import { CallContext, timeCall } from '@/lib/telemetry';
 import { withRole } from '@/lib/models/base/instrumented';
+import { splitScrapedContent } from '../../chunking';
 
 /* The sub-step is display-only, and the UI reads just the url and title.
  * Emitting the pipeline's own objects would ship metadata.embedding -- a full
@@ -439,7 +439,7 @@ export const executeSearch = async (input: {
           if (!scrapedData) return;
 
           let accumulatedContent = '';
-          const chunks = splitText(scrapedData.content, 4000, 500);
+          const chunks = splitScrapedContent(scrapedData.content);
 
           patchProgress(
             input.session,

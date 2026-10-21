@@ -1,5 +1,6 @@
 import ModelRegistry from './registry';
 import { CallContext, recordCall } from '@/lib/telemetry';
+import { getChunkTokens } from '@/lib/agents/search/researcher/chunking';
 
 /* Structural check rather than an instanceof: only some providers have a
  * management API, and importing the concrete class here would couple the
@@ -34,19 +35,18 @@ export type PreloadResult = {
   warning?: string;
 };
 
-/* The extractor splits scraped pages into 4000-token chunks, and the writer
- * prompt is of the same order, so a slot needs room for that plus its own
- * output and the chat history. Below this the model will start truncating. */
-const CHUNK_TOKENS = 4000;
-const MIN_SLOT_CONTEXT = CHUNK_TOKENS * 2;
-
+/* A slot needs room for a chunk plus the request's own output and history, so
+ * the threshold tracks the configured chunk size rather than a literal -- the
+ * two settings are the same quantity seen from either end. */
 const slotWarning = (slots: number, contextPerSlot: number) => {
-  if (slots <= 1 || contextPerSlot >= MIN_SLOT_CONTEXT) return undefined;
+  const chunkTokens = getChunkTokens();
+
+  if (slots <= 1 || contextPerSlot >= chunkTokens * 2) return undefined;
 
   return (
     `${slots} parallel slots leave only ${contextPerSlot.toLocaleString()} tokens each. ` +
-    `A search sends prompts of around ${CHUNK_TOKENS.toLocaleString()} tokens, so requests may be truncated. ` +
-    `Reduce --parallel or raise --ctx-size.`
+    `A search sends prompts of around ${chunkTokens.toLocaleString()} tokens, so requests may be truncated. ` +
+    `Reduce --parallel, raise --ctx-size, or lower the scrape chunk size.`
   );
 };
 

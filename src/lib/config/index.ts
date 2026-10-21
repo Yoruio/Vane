@@ -114,6 +114,28 @@ class ConfigManager {
         scope: 'server',
         env: 'SEARXNG_API_URL',
       },
+      {
+        name: 'Scrape chunk size (tokens)',
+        key: 'chunkTokens',
+        type: 'string',
+        required: false,
+        description:
+          'A scraped page is split into chunks of this size and each one is sent to the model separately. Larger chunks mean fewer requests, which is faster when the model is the bottleneck, but each request needs to fit in the context window.',
+        placeholder: '4000',
+        default: '4000',
+        scope: 'server',
+      },
+      {
+        name: 'Max chunks per page',
+        key: 'maxChunksPerPage',
+        type: 'string',
+        required: false,
+        description:
+          'Stop after this many chunks of a page. Reading a long page can cost several minutes on a local model, and the chunks after the first few are usually navigation and footers. Content past the limit is discarded, so raise it if answers start missing detail. Set 0 to read the whole page.',
+        placeholder: '3',
+        default: '3',
+        scope: 'server',
+      },
     ],
     debug: [
       {
