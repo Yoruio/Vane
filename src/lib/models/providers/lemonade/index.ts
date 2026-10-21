@@ -245,9 +245,13 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     if (!raw.baseURL)
       throw new Error('Invalid config provided. Base URL must be provided');
 
+    /* Every key the provider needs has to be listed here: this builds the
+     * config object rather than spreading raw, so anything omitted is silently
+     * dropped before the instance sees it. */
     return {
       baseURL: String(raw.baseURL),
       apiKey: raw.apiKey ? String(raw.apiKey) : undefined,
+      llamacppArgs: raw.llamacppArgs ? String(raw.llamacppArgs) : undefined,
     };
   }
 
