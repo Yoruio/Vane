@@ -38,7 +38,48 @@ const trailingRun = (text: string) => {
 };
 
 class SearchAgent {
+  /**
+   * Runs a search, and records a failure as a failure.
+   *
+   * Without this the row keeps the 'answering' it was given at the start, so a
+   * run that died looks eternally in progress: the tab spins forever and
+   * /api/reconnect keeps trying to resume a session that is gone. Seen on
+   * 2026-10-21 when the model backend dropped a connection — only the browser
+   * knew, and only until it was reloaded.
+   *
+   * A thin wrapper rather than a try block around the body, to keep the diff
+   * off every line of it; upstream #1093 does the same thing by re-indenting.
+   */
   async searchAsync(session: SessionManager, input: SearchAgentInput) {
+    try {
+      await this.run(session, input);
+    } catch (err) {
+      await this.markFailed(input);
+      throw err;
+    }
+  }
+
+  /* Partial results are kept deliberately: a run that failed at the writer may
+   * still have gathered every source, and throwing that away makes the failure
+   * worse than it was. */
+  private async markFailed(input: SearchAgentInput) {
+    try {
+      await db
+        .update(messages)
+        .set({ status: 'error' })
+        .where(
+          and(
+            eq(messages.chatId, input.chatId),
+            eq(messages.messageId, input.messageId),
+          ),
+        )
+        .execute();
+    } catch (err) {
+      console.error('Failed to record search failure:', err);
+    }
+  }
+
+  private async run(session: SessionManager, input: SearchAgentInput) {
     const exists = await db.query.messages.findFirst({
       where: and(
         eq(messages.chatId, input.chatId),
