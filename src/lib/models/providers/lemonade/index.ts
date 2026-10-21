@@ -10,6 +10,7 @@ import LemonadeEmbedding from './lemonadeEmbedding';
 interface LemonadeConfig {
   baseURL: string;
   apiKey?: string;
+  llamacppArgs?: string;
 }
 
 const providerConfigFields: UIConfigField[] = [
@@ -21,6 +22,17 @@ const providerConfigFields: UIConfigField[] = [
     required: true,
     placeholder: 'https://api.lemonade.ai/v1',
     env: 'LEMONADE_BASE_URL',
+    scope: 'server',
+  },
+  {
+    type: 'string',
+    name: 'llama.cpp arguments',
+    key: 'llamacppArgs',
+    description:
+      'Passed to llama-server when this app loads a model, overriding the server default. "--parallel 4" lets concurrent requests share a batch, which on bandwidth-bound hardware roughly doubles throughput when a search runs several extractions at once; it also divides the context window between slots. Leave empty to use whatever the server is configured with.',
+    required: false,
+    placeholder: '--parallel 4',
+    env: 'LEMONADE_LLAMACPP_ARGS',
     scope: 'server',
   },
   {
@@ -60,31 +72,75 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
    * the first request after that pays ~26s of load -- which otherwise lands on
    * whichever call happens to be first.
    */
-  async isModelLoaded(modelName: string): Promise<boolean> {
+  private async loadedRecord(modelName: string): Promise<any | null> {
     try {
       const res = await fetch(this.managementURL('/health'), {
         headers: this.managementHeaders(),
       });
 
-      if (!res.ok) return false;
+      if (!res.ok) return null;
 
       const health = await res.json();
 
-      return (health.all_models_loaded ?? []).some(
-        (m: any) => m.model_name === modelName && m.loaded,
+      return (
+        (health.all_models_loaded ?? []).find(
+          (m: any) => m.model_name === modelName && m.loaded,
+        ) ?? null
       );
     } catch {
       /* An unreachable management API is not a reason to block a search. */
+      return null;
+    }
+  }
+
+  async isModelLoaded(modelName: string): Promise<boolean> {
+    const record = await this.loadedRecord(modelName);
+
+    if (!record) return false;
+
+    /* Resident but launched with different arguments counts as not ready, or
+     * configuring them here would silently do nothing whenever the model
+     * happened to already be up. */
+    if (
+      this.config.llamacppArgs &&
+      record.recipe_options?.llamacpp_args !== this.config.llamacppArgs
+    ) {
       return false;
     }
+
+    return true;
   }
 
   async loadModel(modelName: string): Promise<boolean> {
     try {
+      /* llama-server only takes its arguments at process start, so applying
+       * them to a resident model means restarting it. Never do that while it is
+       * serving someone -- another client may share this box. */
+      const record = await this.loadedRecord(modelName);
+
+      if (record && !record.is_busy && !record.is_streaming) {
+        await fetch(this.managementURL('/unload'), {
+          method: 'POST',
+          headers: this.managementHeaders(),
+          body: JSON.stringify({ model_name: modelName }),
+        }).catch(() => undefined);
+      } else if (record) {
+        /* Busy: leave it alone and report the current state as good enough. */
+        return true;
+      }
+
       const res = await fetch(this.managementURL('/load'), {
         method: 'POST',
         headers: this.managementHeaders(),
-        body: JSON.stringify({ model_name: modelName }),
+        body: JSON.stringify({
+          model_name: modelName,
+          /* Only sent when configured, so the server keeps its own defaults
+           * otherwise. Note the load endpoint reports success even for keys it
+           * ignores, so check /health to confirm it took effect. */
+          ...(this.config.llamacppArgs
+            ? { llamacpp_args: this.config.llamacppArgs }
+            : {}),
+        }),
       });
 
       if (!res.ok) return false;
