@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { MinimalProvider } from '@/lib/models/types';
 import { useChat } from '@/lib/hooks/useChat';
 import { AnimatePresence, motion } from 'motion/react';
+import { toast } from 'sonner';
 
 const ModelSelector = () => {
   const [providers, setProviders] = useState<MinimalProvider[]>([]);
@@ -60,6 +61,61 @@ const ModelSelector = () => {
     setChatModelProvider({ providerId, key: modelKey });
     localStorage.setItem('chatModelProviderId', providerId);
     localStorage.setItem('chatModelKey', modelKey);
+
+    /* Fire and forget: ask the provider to bring the weights into memory now,
+     * so the load overlaps the user typing instead of landing on the first
+     * model call of the search. Providers with nothing to load report
+     * unsupported and nothing is shown. */
+    const toastId = `preload-${providerId}-${modelKey}`;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+
+    const request = fetch('/api/models/preload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providerId, key: modelKey }),
+    })
+      .then((res) => res.json())
+      .then((result) => {
+        clearTimeout(pending);
+
+        if (!result?.supported) {
+          toast.dismiss(toastId);
+          return;
+        }
+
+        if (result.alreadyLoaded) {
+          toast.success(`${modelKey} is already loaded`, {
+            id: toastId,
+            duration: 2500,
+          });
+          return;
+        }
+
+        if (result.loaded) {
+          toast.success(
+            `${modelKey} loaded in ${(result.durationMs / 1000).toFixed(1)}s`,
+            { id: toastId, duration: 4000 },
+          );
+          return;
+        }
+
+        toast.error(`Could not preload ${modelKey}`, {
+          id: toastId,
+          duration: 4000,
+        });
+      })
+      .catch(() => {
+        clearTimeout(pending);
+        toast.dismiss(toastId);
+      });
+
+    /* Only say anything if it is slow enough to be worth a message -- a hosted
+     * provider answers in milliseconds and should stay silent. */
+    pending = setTimeout(() => {
+      toast.loading(`Loading ${modelKey}…`, { id: toastId });
+    }, 600);
+
+    return request;
   };
 
   const filteredProviders = orderedProviders

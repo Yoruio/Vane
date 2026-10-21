@@ -1,7 +1,7 @@
 import db from './db';
 import { llmCalls } from './db/schema';
 
-export type CallKind = 'model' | 'search' | 'scrape' | 'embed';
+export type CallKind = 'model' | 'search' | 'scrape' | 'embed' | 'load';
 
 export type CallContext = {
   messageId?: string;

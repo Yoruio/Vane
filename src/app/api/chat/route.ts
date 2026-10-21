@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import ModelRegistry from '@/lib/models/registry';
+import { ensureModelReady } from '@/lib/models/preload';
 import { ModelWithProvider } from '@/lib/models/types';
 import SearchAgent from '@/lib/agents/search';
 import SessionManager from '@/lib/session';
@@ -138,6 +139,14 @@ export const POST = async (req: Request) => {
         { messageId: body.message.messageId, chatId: body.message.chatId },
       ),
     ]);
+
+    /* Confirm the weights are resident before anything calls the model, so a
+     * cold local model does not surface as a 34s classifier. No-op for
+     * providers with nothing to load. */
+    await ensureModelReady(body.chatModel.providerId, body.chatModel.key, {
+      messageId: body.message.messageId,
+      chatId: body.message.chatId,
+    });
 
     const history: ChatTurnMessage[] = body.history.map((msg) => {
       if (msg[0] === 'human') {

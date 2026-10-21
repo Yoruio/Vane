@@ -40,6 +40,63 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     super(id, name, config);
   }
 
+  /* Lemonade's management API sits beside the OpenAI-compatible path: the
+   * configured baseURL ends in /v1, the management routes are under /api/v1. */
+  private managementURL(path: string) {
+    return `${this.config.baseURL.replace(/\/v1\/?$/, '')}/api/v1${path}`;
+  }
+
+  private managementHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      ...(this.config.apiKey
+        ? { Authorization: `Bearer ${this.config.apiKey}` }
+        : {}),
+    };
+  }
+
+  /**
+   * Whether the weights are already resident. Lemonade unloads idle models, and
+   * the first request after that pays ~26s of load -- which otherwise lands on
+   * whichever call happens to be first.
+   */
+  async isModelLoaded(modelName: string): Promise<boolean> {
+    try {
+      const res = await fetch(this.managementURL('/health'), {
+        headers: this.managementHeaders(),
+      });
+
+      if (!res.ok) return false;
+
+      const health = await res.json();
+
+      return (health.all_models_loaded ?? []).some(
+        (m: any) => m.model_name === modelName && m.loaded,
+      );
+    } catch {
+      /* An unreachable management API is not a reason to block a search. */
+      return false;
+    }
+  }
+
+  async loadModel(modelName: string): Promise<boolean> {
+    try {
+      const res = await fetch(this.managementURL('/load'), {
+        method: 'POST',
+        headers: this.managementHeaders(),
+        body: JSON.stringify({ model_name: modelName }),
+      });
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+
+      return data.status === 'success';
+    } catch {
+      return false;
+    }
+  }
+
   async getDefaultModels(): Promise<ModelList> {
     try {
       const res = await fetch(`${this.config.baseURL}/models`, {

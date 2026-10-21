@@ -44,6 +44,7 @@ const kindLabel: Record<string, string> = {
   search: 'Search',
   scrape: 'Page fetch',
   embed: 'Embedding',
+  load: 'Model load',
 };
 
 const roleLabel: Record<string, string> = {
@@ -73,6 +74,7 @@ const kindColor: Record<string, string> = {
   search: 'bg-blue-400',
   scrape: 'bg-orange-400',
   embed: 'bg-teal-400',
+  load: 'bg-fuchsia-400',
 };
 
 const barColor = (call: Call) =>
