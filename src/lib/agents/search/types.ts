@@ -14,6 +14,11 @@ export type SearchAgentConfig = {
   embedding: BaseEmbedding<any>;
   mode: 'speed' | 'balanced' | 'quality';
   systemInstructions: string;
+  /* How many tokens one request to this model can actually hold. Known only
+   * for providers that report it, and it is the per-slot figure rather than the
+   * model's nominal window: llama-server divides its context between parallel
+   * slots, so a 131k model can mean 11k per request. */
+  contextPerRequest?: number;
 };
 
 export type SearchAgentInput = {
@@ -74,6 +79,7 @@ export type AdditionalConfig = {
    * extractor compresses a chunk to a few hundred characters and needs to know
    * what to keep. */
   query?: string;
+  contextPerRequest?: number;
 };
 
 export type ResearcherInput = {

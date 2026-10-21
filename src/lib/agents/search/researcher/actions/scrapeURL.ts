@@ -181,7 +181,7 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             );
           }
 
-          const chunks = splitScrapedContent(scraped.content);
+          const chunks = splitScrapedContent(scraped.content, additionalConfig.contextPerRequest);
 
           patchProgress(
             additionalConfig.session,

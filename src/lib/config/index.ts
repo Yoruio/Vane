@@ -120,7 +120,7 @@ class ConfigManager {
         type: 'string',
         required: false,
         description:
-          'A scraped page is split into chunks of this size and each one is sent to the model separately. Larger chunks mean fewer requests, which is faster when the model is the bottleneck, but each request needs to fit in the context window.',
+          'A scraped page is split into chunks of this size and each one is sent to the model separately. Leave empty to size each chunk to what one request to the current model can actually hold, which is the safer default because the usable window depends on how many parallel slots the server was started with. Set a number to override that.',
         placeholder: '4000',
         default: '4000',
         scope: 'server',

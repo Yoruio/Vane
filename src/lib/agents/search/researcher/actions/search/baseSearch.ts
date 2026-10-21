@@ -36,6 +36,7 @@ export const executeSearch = async (input: {
   llm: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
   callContext?: CallContext;
+  contextPerRequest?: number;
 }) => {
   const researchBlock = input.researchBlock;
 
@@ -439,7 +440,7 @@ export const executeSearch = async (input: {
           if (!scrapedData) return;
 
           let accumulatedContent = '';
-          const chunks = splitScrapedContent(scrapedData.content);
+          const chunks = splitScrapedContent(scrapedData.content, input.contextPerRequest);
 
           patchProgress(
             input.session,

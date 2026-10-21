@@ -103,6 +103,7 @@ const webSearchAction: ResearchAction<typeof actionSchema> = {
       researchBlock: researchBlock,
       session: additionalConfig.session,
       callContext: additionalConfig.callContext,
+      contextPerRequest: additionalConfig.contextPerRequest,
     });
 
     return {

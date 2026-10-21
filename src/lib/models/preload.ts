@@ -1,6 +1,10 @@
 import ModelRegistry from './registry';
 import { CallContext, recordCall } from '@/lib/telemetry';
-import { getChunkTokens } from '@/lib/agents/search/researcher/chunking';
+import {
+  AUTO_CHUNK_FLOOR,
+  REQUEST_OVERHEAD_TOKENS,
+  getConfiguredChunkTokens,
+} from '@/lib/agents/search/researcher/chunking';
 
 /* Structural check rather than an instanceof: only some providers have a
  * management API, and importing the concrete class here would couple the
@@ -35,18 +39,34 @@ export type PreloadResult = {
   warning?: string;
 };
 
-/* A slot needs room for a chunk plus the request's own output and history, so
- * the threshold tracks the configured chunk size rather than a literal -- the
- * two settings are the same quantity seen from either end. */
+/**
+ * Whether this slot size will actually cause trouble.
+ *
+ * When the chunk size is automatic it is derived from the slot size, so it fits
+ * by construction and there is nothing to warn about. Only two cases are real:
+ * an explicit chunk size that does not fit, and slots so small that even the
+ * smallest useful chunk will not fit.
+ */
 const slotWarning = (slots: number, contextPerSlot: number) => {
-  const chunkTokens = getChunkTokens();
+  const explicit = getConfiguredChunkTokens();
 
-  if (slots <= 1 || contextPerSlot >= chunkTokens * 2) return undefined;
+  if (explicit) {
+    if (explicit + REQUEST_OVERHEAD_TOKENS <= contextPerSlot) return undefined;
+
+    return (
+      `Scrape chunk size is set to ${explicit.toLocaleString()} tokens, but ${slots} parallel ` +
+      `slots leave only ${contextPerSlot.toLocaleString()} tokens per request. Requests will be ` +
+      `truncated or rejected. Lower the chunk size, reduce --parallel, or clear the chunk size ` +
+      `to size it automatically.`
+    );
+  }
+
+  if (contextPerSlot >= AUTO_CHUNK_FLOOR + REQUEST_OVERHEAD_TOKENS)
+    return undefined;
 
   return (
-    `${slots} parallel slots leave only ${contextPerSlot.toLocaleString()} tokens each. ` +
-    `A search sends prompts of around ${chunkTokens.toLocaleString()} tokens, so requests may be truncated. ` +
-    `Reduce --parallel, raise --ctx-size, or lower the scrape chunk size.`
+    `${slots} parallel slots leave only ${contextPerSlot.toLocaleString()} tokens per request, ` +
+    `which is too small to read a page with. Reduce --parallel or raise --ctx-size.`
   );
 };
 

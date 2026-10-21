@@ -143,10 +143,14 @@ export const POST = async (req: Request) => {
     /* Confirm the weights are resident before anything calls the model, so a
      * cold local model does not surface as a 34s classifier. No-op for
      * providers with nothing to load. */
-    await ensureModelReady(body.chatModel.providerId, body.chatModel.key, {
-      messageId: body.message.messageId,
-      chatId: body.message.chatId,
-    });
+    const modelReady = await ensureModelReady(
+      body.chatModel.providerId,
+      body.chatModel.key,
+      {
+        messageId: body.message.messageId,
+        chatId: body.message.chatId,
+      },
+    );
 
     const history: ChatTurnMessage[] = body.history.map((msg) => {
       if (msg[0] === 'human') {
@@ -236,6 +240,7 @@ export const POST = async (req: Request) => {
           mode: body.optimizationMode,
           fileIds: body.files,
           systemInstructions: body.systemInstructions || 'None',
+          contextPerRequest: modelReady.contextPerSlot,
         },
       })
       .catch((err) => {

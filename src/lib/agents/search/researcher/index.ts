@@ -200,6 +200,7 @@ class Researcher {
          * like "what about the newer one?" still carries its subject. */
         query:
           input.classification.standaloneFollowUp || input.followUp,
+        contextPerRequest: input.config.contextPerRequest,
         researchBlockId: researchBlockId,
         fileIds: input.config.fileIds,
         mode: input.config.mode,
