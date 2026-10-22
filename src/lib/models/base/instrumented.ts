@@ -1,6 +1,6 @@
 import z from 'zod';
 import BaseLLM from './llm';
-import { CallContext, recordCall } from '@/lib/telemetry';
+import { CallContext, beginCall, completeCall } from '@/lib/telemetry';
 import { getTokenCount } from '@/lib/utils/splitText';
 import {
   GenerateObjectInput,
@@ -21,6 +21,9 @@ type Pending = {
   start: number;
   firstChunkMs?: number;
   inputText: string;
+  /* The open row, so finishing updates it rather than writing a second one.
+   * A promise because begin() cannot await without delaying the call itself. */
+  row: Promise<number | null>;
 };
 
 const serializeMessages = (messages: { role: string; content: string }[]) =>
@@ -61,30 +64,32 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
   }
 
   private begin(method: string, inputText: string): Pending {
+    const startedAt = new Date().toISOString();
+
     return {
       method,
-      startedAt: new Date().toISOString(),
+      startedAt,
       start: Date.now(),
       inputText,
+      /* Opened now, not awaited: the row exists so the call shows as running,
+       * and nothing about the request waits on a database write. */
+      row: beginCall(this.ctx, {
+        kind: 'model',
+        method,
+        role: this.ctx.role,
+        provider: this.ctx.provider,
+        model: this.ctx.model,
+        startedAt,
+        inputText,
+        inputTokens: getTokenCount(inputText),
+      }),
     };
   }
 
   private async finish(p: Pending, outputText: string, error?: unknown) {
-    await recordCall(this.ctx, {
-      kind: 'model',
-      method: p.method,
-      role: this.ctx.role,
-      provider: this.ctx.provider,
-      model: this.ctx.model,
-      startedAt: p.startedAt,
+    await completeCall(await p.row, this.ctx, {
       durationMs: Date.now() - p.start,
       firstChunkMs: p.firstChunkMs,
-      inputText: p.inputText,
-      /* Counted here, where the prompt is already assembled, rather than in the
-       * provider -- every provider would otherwise need it, and the estimate is
-       * about Vane's own budgeting, not the wire format. Only model calls: an
-       * embedding batch is not context-bound and there are ~90 per run. */
-      inputTokens: getTokenCount(p.inputText),
       outputText,
       error,
     });

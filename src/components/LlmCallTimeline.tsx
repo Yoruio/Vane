@@ -113,27 +113,59 @@ const chars = (v: number | null | undefined) => {
  * this too; it was removed once the timeline was available where the run
  * actually happened.
  */
-const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
+const LlmCallTimeline = ({
+  messageId,
+  isRunning = false,
+}: {
+  messageId: string;
+  isRunning?: boolean;
+}) => {
   const [calls, setCalls] = useState<Call[]>([]);
   const [detail, setDetail] = useState<CallDetail | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [embedsOpen, setEmbedsOpen] = useState(false);
 
   useEffect(() => {
     if (!messageId) return;
 
     let cancelled = false;
 
-    setCalls([]);
-    fetch(`/api/debug/llm-calls?messageId=${encodeURIComponent(messageId)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled) setCalls(data.calls ?? []);
-      })
-      .catch(() => undefined);
+    const load = () =>
+      fetch(`/api/debug/llm-calls?messageId=${encodeURIComponent(messageId)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (!cancelled) setCalls(data.calls ?? []);
+        })
+        .catch(() => undefined);
+
+    load();
+
+    /* While the run is live, new calls appear and open ones close, so re-read.
+     * A finished run never changes and is fetched once. */
+    if (!isRunning) return () => {
+      cancelled = true;
+    };
+
+    const poll = setInterval(load, 2000);
 
     return () => {
       cancelled = true;
+      clearInterval(poll);
     };
-  }, [messageId]);
+  }, [messageId, isRunning]);
+
+  /* Open rows have no duration yet, so their bars are measured against the
+   * clock here rather than waiting for the server to tell us how long they
+   * took -- which it cannot do until they finish. */
+  const hasRunning = calls.some((c) => c.durationMs === null);
+
+  useEffect(() => {
+    if (!hasRunning) return;
+
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+
+    return () => clearInterval(tick);
+  }, [hasRunning]);
 
   const openCall = useCallback((id: number) => {
     fetch(`/api/debug/llm-calls?callId=${id}`)
@@ -145,10 +177,12 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
   /* The timeline is laid out against wall-clock time, not call order, so
    * overlapping bars are exactly the concurrent fan-out. */
   const t0 = calls.length ? Date.parse(calls[0].startedAt) : 0;
-  const tEnd = calls.reduce(
-    (max, c) => Math.max(max, Date.parse(c.startedAt) + (c.durationMs ?? 0)),
-    t0 + 1,
-  );
+  const endOf = (c: Call) =>
+    c.durationMs === null
+      ? Math.max(now, Date.parse(c.startedAt))
+      : Date.parse(c.startedAt) + c.durationMs;
+
+  const tEnd = calls.reduce((max, c) => Math.max(max, endOf(c)), t0 + 1);
   const span = Math.max(tEnd - t0, 1);
 
   /* Usually one model for the whole run, but a reconnect or a settings change
@@ -160,6 +194,38 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
         .filter(Boolean),
     ),
   );
+
+  /* Embeddings are collapsed into one row. A speed-mode run makes about ninety
+   * of them, which buries the handful of calls that explain the run's cost;
+   * grouped, they still show when they happened and how much work they were. */
+  type Row =
+    | { type: 'call'; call: Call; nested?: boolean }
+    | { type: 'embedGroup'; calls: Call[] };
+
+  const embeds = calls.filter((c) => c.kind === 'embed');
+  const rows: Row[] = [];
+  let groupPlaced = false;
+
+  for (const call of calls) {
+    if (call.kind !== 'embed') {
+      rows.push({ type: 'call', call });
+      continue;
+    }
+
+    /* The group sits where the first embedding did, keeping the timeline in
+     * chronological order, and expanding lists them all together underneath --
+     * scattering them between later calls would read as orphaned rows. */
+    if (!groupPlaced) {
+      rows.push({ type: 'embedGroup', calls: embeds });
+      groupPlaced = true;
+
+      if (embedsOpen) {
+        for (const embed of embeds) {
+          rows.push({ type: 'call', call: embed, nested: true });
+        }
+      }
+    }
+  }
 
   if (calls.length === 0) return null;
 
@@ -187,24 +253,59 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
       </div>
 
       <div className="flex flex-col gap-[3px]">
-        {calls.map((call) => {
-          const offset = (Date.parse(call.startedAt) - t0) / span;
-          const width = Math.max((call.durationMs ?? 0) / span, 0.004);
-          const ttfb = call.firstChunkMs
-            ? call.firstChunkMs / (call.durationMs || call.firstChunkMs)
-            : 0;
+        {rows.map((row) => {
+          if (row.type === 'embedGroup') {
+            const first = Math.min(...row.calls.map((c) => Date.parse(c.startedAt)));
+            const last = Math.max(...row.calls.map(endOf));
+            const running = row.calls.filter((c) => c.durationMs === null).length;
+            const cpu = row.calls.reduce((t, c) => t + (c.durationMs ?? 0), 0);
+
+            return (
+              <button
+                key="embed-group"
+                onClick={() => setEmbedsOpen(!embedsOpen)}
+                title={`${row.calls.length} embeddings · ${ms(cpu)} of work in ${ms(last - first)} of wall clock`}
+                className="relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group flex items-center"
+              >
+                <span
+                  className={`absolute top-1 h-3 rounded-sm bg-teal-400 dark:bg-teal-300 opacity-80 group-hover:opacity-100 ${running ? 'animate-pulse' : ''}`}
+                  style={{
+                    left: `${((first - t0) / span) * 100}%`,
+                    width: `${Math.max((last - first) / span, 0.004) * 100}%`,
+                    minWidth: '2px',
+                  }}
+                />
+                <span className="relative z-10 ml-auto pl-2 pr-1 text-[10px] font-mono text-black/50 dark:text-white/50">
+                  {embedsOpen ? '▾' : '▸'} {row.calls.length} embeddings
+                  {running > 0 && `, ${running} running`}
+                </span>
+              </button>
+            );
+          }
+
+          const call = row.call;
+          const start = Date.parse(call.startedAt);
+          const offset = (start - t0) / span;
+          const width = Math.max((endOf(call) - start) / span, 0.004);
+          const open = call.durationMs === null;
+          const ttfb =
+            !open && call.firstChunkMs
+              ? call.firstChunkMs / (call.durationMs || call.firstChunkMs)
+              : 0;
 
           return (
             <button
               key={call.id}
               onClick={() => openCall(call.id)}
-              title={`${label(call)} · ${call.label ?? call.model ?? ''} · ${ms(call.durationMs)}`}
-              className="relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group"
+              title={`${label(call)} · ${call.label ?? call.model ?? ''} · ${
+                open ? `running ${ms(now - start)}` : ms(call.durationMs)
+              }`}
+              className={`relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group ${row.nested ? 'pl-4' : ''}`}
             >
               <span
                 className={`absolute top-1 h-3 rounded-sm overflow-hidden ${barColor(
                   call,
-                )} opacity-80 group-hover:opacity-100`}
+                )} opacity-80 group-hover:opacity-100 ${open ? 'animate-pulse' : ''}`}
                 style={{
                   left: `${offset * 100}%`,
                   width: `${width * 100}%`,

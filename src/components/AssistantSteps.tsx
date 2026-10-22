@@ -418,7 +418,7 @@ const AssistantSteps = ({
             * and a chat can hold many of these panels. */}
           {showCalls && (
             <div className="px-3 pb-3">
-              <LlmCallTimeline messageId={messageId} />
+              <LlmCallTimeline messageId={messageId} isRunning={isRunning} />
             </div>
           )}
         </div>
