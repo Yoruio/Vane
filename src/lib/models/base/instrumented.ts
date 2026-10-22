@@ -1,6 +1,7 @@
 import z from 'zod';
 import BaseLLM from './llm';
 import { CallContext, recordCall } from '@/lib/telemetry';
+import { getTokenCount } from '@/lib/utils/splitText';
 import {
   GenerateObjectInput,
   GenerateTextInput,
@@ -79,6 +80,11 @@ class InstrumentedLLM<CONFIG> extends BaseLLM<CONFIG> {
       durationMs: Date.now() - p.start,
       firstChunkMs: p.firstChunkMs,
       inputText: p.inputText,
+      /* Counted here, where the prompt is already assembled, rather than in the
+       * provider -- every provider would otherwise need it, and the estimate is
+       * about Vane's own budgeting, not the wire format. Only model calls: an
+       * embedding batch is not context-bound and there are ~90 per run. */
+      inputTokens: getTokenCount(p.inputText),
       outputText,
       error,
     });

@@ -43,6 +43,10 @@ export const llmCalls = sqliteTable('llm_calls', {
   // total duration when comparing backends.
   firstChunkMs: integer('firstChunkMs'),
   inputChars: integer('inputChars'),
+  /* Counted with js-tiktoken before the call. Characters are a poor proxy for
+   * how close a prompt is to the context limit, and the limit is what ends a
+   * run. */
+  inputTokens: integer('inputTokens'),
   outputChars: integer('outputChars'),
   inputText: text('inputText'),
   outputText: text('outputText'),

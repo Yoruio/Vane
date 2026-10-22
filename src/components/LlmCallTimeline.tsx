@@ -15,6 +15,7 @@ interface Call {
   durationMs: number | null;
   firstChunkMs: number | null;
   inputChars: number | null;
+  inputTokens: number | null;
   outputChars: number | null;
   error: string | null;
   hasText: number;
@@ -264,7 +265,9 @@ const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
               <div className="text-xs text-black/50 dark:text-white/50">
                 Input
               </div>
-              {chars(detail.inputChars)} chars
+              {detail.inputTokens
+                ? `${chars(detail.inputTokens)} tokens`
+                : `${chars(detail.inputChars)} chars`}
             </div>
             <div>
               <div className="text-xs text-black/50 dark:text-white/50">

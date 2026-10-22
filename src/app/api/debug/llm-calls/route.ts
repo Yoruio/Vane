@@ -23,6 +23,7 @@ const callSummary = {
   durationMs: llmCalls.durationMs,
   firstChunkMs: llmCalls.firstChunkMs,
   inputChars: llmCalls.inputChars,
+  inputTokens: llmCalls.inputTokens,
   outputChars: llmCalls.outputChars,
   error: llmCalls.error,
   hasText: sql<number>`(${llmCalls.inputText} is not null or ${llmCalls.outputText} is not null)`,

@@ -15,6 +15,7 @@ type CallRow = {
   kind: CallKind;
   method: string;
   role?: string;
+  inputTokens?: number;
   startedAt: string;
   durationMs: number;
   label?: string;
@@ -50,6 +51,7 @@ export const recordCall = async (ctx: CallContext, row: CallRow) => {
       durationMs: row.durationMs,
       firstChunkMs: row.firstChunkMs,
       inputChars: row.inputText?.length,
+      inputTokens: row.inputTokens,
       outputChars: row.outputText?.length,
       inputText: ctx.captureText ? row.inputText : null,
       outputText: ctx.captureText ? row.outputText : null,
