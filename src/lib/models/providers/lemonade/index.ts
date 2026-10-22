@@ -52,60 +52,6 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     super(id, name, config);
   }
 
-  /* A request needs room for the largest thing the app sends. Measured: an
-   * orchestrator prompt reached 9,148 tokens and was still growing when it
-   * overflowed, a writer prompt runs ~4,200, and an auto-sized chunk plus its
-   * overhead ~14,000. */
-  private static readonly CONTEXT_PER_REQUEST = 16384;
-
-  /* Four rather than more: throughput gains flatten quickly on prefill-heavy
-   * work -- 8 concurrent extractor-shaped requests measured 144.4s at 4 slots
-   * against 135.7s at 8 -- and every extra slot takes context away from a
-   * request that is already the thing overflowing. */
-  private static readonly MAX_SLOTS = 4;
-
-  /** The model's context window, read before loading so slots can be derived. */
-  private async contextLength(modelName: string): Promise<number | null> {
-    try {
-      const res = await fetch(this.managementURL('/models'), {
-        headers: this.managementHeaders(),
-      });
-
-      if (!res.ok) return null;
-
-      const body = await res.json();
-      const model = (body.data ?? []).find((m: any) => m.id === modelName);
-
-      return model?.context_length ?? model?.max_context_window ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * How many parallel slots this model can afford.
-   *
-   * llama-server splits its context between slots, so parallelism and the size
-   * of a single request trade off directly. Configuring it by hand means a
-   * value chosen for one model silently starves the next: `--parallel 4` is
-   * right for a 131k model and leaves a 32k model with 8,192 tokens per
-   * request, which is less than the orchestrator needs by the fourth
-   * iteration. Deriving it from the model cannot go stale that way.
-   */
-  private async deriveSlots(modelName: string): Promise<number | null> {
-    const context = await this.contextLength(modelName);
-
-    if (!context) return null;
-
-    return Math.max(
-      1,
-      Math.min(
-        LemonadeProvider.MAX_SLOTS,
-        Math.floor(context / LemonadeProvider.CONTEXT_PER_REQUEST),
-      ),
-    );
-  }
-
   /* Lemonade's management API sits beside the OpenAI-compatible path: the
    * configured baseURL ends in /v1, the management routes are under /api/v1. */
   private managementURL(path: string) {
@@ -232,28 +178,17 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
      * matches, which made every single search unload and reload the model. */
     if (this.config.llamacppArgs) return this.hasArgs(record);
 
-    /* A model left resident with the wrong split would never be corrected
-     * otherwise -- the same trap as comparing arguments by equality. */
-    const slots = await this.deriveSlots(modelName);
-
-    if (slots) {
-      const args: string[] = (record.launch_command ?? []).map(String);
-      const at = args.indexOf('--parallel');
-
-      if (at === -1 || Number(args[at + 1]) !== slots) return false;
-    }
-
     return true;
   }
 
   async loadModel(modelName: string): Promise<boolean> {
     try {
-      const derived = this.config.llamacppArgs
-        ? null
-        : await this.deriveSlots(modelName);
-      const args =
-        this.config.llamacppArgs ??
-        (derived ? `--parallel ${derived}` : undefined);
+      /* Deriving parallelism was tried and reverted on 2026-10-21: sending
+       * llamacpp_args makes Lemonade launch without its own --ctx-size, and
+       * llama.cpp then falls back to n_ctx 4096. A 131k model was rejecting
+       * 4,424-token requests. Only pass arguments somebody asked for, and even
+       * then expect the server's own defaults to be lost. */
+      const args = this.config.llamacppArgs;
 
       /* llama-server only takes its arguments at process start, so applying
        * them to a resident model means restarting it. Never do that while it is
