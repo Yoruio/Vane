@@ -78,19 +78,26 @@ const kindColor: Record<string, string> = {
   load: 'bg-fuchsia-400',
 };
 
+/* Coloured by role rather than by SDK method, matching the row labels. The
+ * method is the mechanism -- streamText is both the orchestrator and the
+ * writer -- so colouring by it made the two most distinct phases of a run the
+ * same colour. A model call with no role falls back to grey rather than to the
+ * method, so an untagged call is visible but never claims a role's colour. */
+const roleColor: Record<string, string> = {
+  classifier: 'bg-violet-500',
+  orchestrator: 'bg-emerald-500',
+  picker: 'bg-indigo-500',
+  extractor: 'bg-amber-500',
+  writer: 'bg-rose-500',
+  widget: 'bg-lime-500',
+};
+
 const barColor = (call: Call) =>
   call.error
     ? 'bg-red-500'
-    : ((call.kind ? kindColor[call.kind] : undefined) ??
-      methodColor[call.method] ??
+    : ((call.role ? roleColor[call.role] : undefined) ??
+      (call.kind ? kindColor[call.kind] : undefined) ??
       'bg-gray-500');
-
-const methodColor: Record<string, string> = {
-  generateText: 'bg-sky-500',
-  streamText: 'bg-emerald-500',
-  generateObject: 'bg-violet-500',
-  streamObject: 'bg-amber-500',
-};
 
 export const ms = (v: number | null | undefined) => {
   if (v === null || v === undefined) return '—';
@@ -227,21 +234,39 @@ const LlmCallTimeline = ({
     }
   }
 
+  /* Only what this run actually contains. Listing all six roles and all four
+   * kinds unconditionally would put ten chips above a speed-mode run that used
+   * four of them, and the legend is there to decode the bars, not to enumerate
+   * the pipeline. Roles stay in pipeline order so the legend reads like the run. */
+  const legend = [
+    ...Object.keys(roleColor)
+      .filter((role) => calls.some((c) => c.role === role))
+      .map((role) => ({
+        key: `role-${role}`,
+        color: roleColor[role],
+        text: roleLabel[role] ?? role,
+      })),
+    ...Object.keys(kindColor)
+      .filter((kind) => calls.some((c) => c.kind === kind && !c.role))
+      .map((kind) => ({
+        key: `kind-${kind}`,
+        color: kindColor[kind],
+        text: kindLabel[kind],
+      })),
+    ...(calls.some((c) => c.error)
+      ? [{ key: 'failed', color: 'bg-red-500', text: 'Failed' }]
+      : []),
+  ];
+
   if (calls.length === 0) return null;
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap gap-3 text-xs text-black/60 dark:text-white/60">
-        {Object.entries(methodColor).map(([method, color]) => (
-          <span key={method} className="flex items-center gap-1.5">
+        {legend.map(({ key, color, text }) => (
+          <span key={key} className="flex items-center gap-1.5">
             <span className={`h-2.5 w-2.5 rounded-sm ${color}`} />
-            {methodLabel[method] ?? method}
-          </span>
-        ))}
-        {Object.entries(kindColor).map(([kind, color]) => (
-          <span key={kind} className="flex items-center gap-1.5">
-            <span className={`h-2.5 w-2.5 rounded-sm ${color}`} />
-            {kindLabel[kind]}
+            {text}
           </span>
         ))}
         <span className="ml-auto text-black/70 dark:text-white/70">
