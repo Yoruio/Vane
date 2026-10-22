@@ -71,6 +71,11 @@ const label = (call: {
   methodLabel[call.method] ??
   call.method;
 
+/* Polls after the run ends, waiting for in-flight rows to be closed by the
+ * call that owns them. Five at 2s covers the write landing just after the
+ * stream closed; past that the owning process is gone and will never close it. */
+const SETTLE_POLLS = 5;
+
 const kindColor: Record<string, string> = {
   search: 'bg-blue-400',
   scrape: 'bg-orange-400',
@@ -131,6 +136,14 @@ const LlmCallTimeline = ({
   const [detail, setDetail] = useState<CallDetail | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [embedsOpen, setEmbedsOpen] = useState(false);
+  /* Set when a row stayed open past the settle window -- the process that owned
+   * it is gone, so it will never be closed. */
+  const [gaveUp, setGaveUp] = useState(false);
+
+  /* Open rows have no duration yet, so their bars are measured against the
+   * clock here rather than waiting for the server to tell us how long they
+   * took -- which it cannot do until they finish. */
+  const hasRunning = calls.some((c) => c.durationMs === null);
 
   useEffect(() => {
     if (!messageId) return;
@@ -148,31 +161,55 @@ const LlmCallTimeline = ({
     load();
 
     /* While the run is live, new calls appear and open ones close, so re-read.
-     * A finished run never changes and is fetched once. */
-    if (!isRunning) return () => {
-      cancelled = true;
-    };
+     *
+     * Polling also has to outlive the run itself. A call's row is closed by
+     * finish(), which commits just after the stream hands its last chunk to the
+     * client -- so the single fetch triggered by the run ending can read the
+     * writer as still open and then never look again, leaving its bar growing
+     * until the page was refreshed. Keep polling until every row has closed. */
+    if (!isRunning && !hasRunning) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
-    const poll = setInterval(load, 2000);
+    /* Bounded, because a row left open by a killed process never closes and
+     * polling it forever would be a leak. On expiry the clock below freezes, so
+     * the bar stops pretending the call is still running. */
+    let settlePolls = 0;
+
+    const poll = setInterval(() => {
+      if (!isRunning) {
+        settlePolls += 1;
+
+        if (settlePolls > SETTLE_POLLS) {
+          clearInterval(poll);
+          if (!cancelled) setGaveUp(true);
+          return;
+        }
+      }
+
+      load();
+    }, 2000);
 
     return () => {
       cancelled = true;
       clearInterval(poll);
     };
-  }, [messageId, isRunning]);
+  }, [messageId, isRunning, hasRunning]);
 
-  /* Open rows have no duration yet, so their bars are measured against the
-   * clock here rather than waiting for the server to tell us how long they
-   * took -- which it cannot do until they finish. */
-  const hasRunning = calls.some((c) => c.durationMs === null);
+  /* A new run gets a fresh grace window. */
+  useEffect(() => {
+    if (isRunning) setGaveUp(false);
+  }, [isRunning, messageId]);
 
   useEffect(() => {
-    if (!hasRunning) return;
+    if (!hasRunning || gaveUp) return;
 
     const tick = setInterval(() => setNow(Date.now()), 1000);
 
     return () => clearInterval(tick);
-  }, [hasRunning]);
+  }, [hasRunning, gaveUp]);
 
   const openCall = useCallback((id: number) => {
     fetch(`/api/debug/llm-calls?callId=${id}`)
@@ -293,7 +330,9 @@ const LlmCallTimeline = ({
                 className="relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group flex items-center"
               >
                 <span
-                  className={`absolute top-1 h-3 rounded-sm bg-teal-400 dark:bg-teal-300 opacity-80 group-hover:opacity-100 ${running ? 'animate-pulse' : ''}`}
+                  className={`absolute top-1 h-3 rounded-sm bg-teal-400 dark:bg-teal-300 opacity-80 group-hover:opacity-100 ${
+                    running && !gaveUp ? 'animate-pulse' : ''
+                  }`}
                   style={{
                     left: `${((first - t0) / span) * 100}%`,
                     width: `${Math.max((last - first) / span, 0.004) * 100}%`,
@@ -323,14 +362,20 @@ const LlmCallTimeline = ({
               key={call.id}
               onClick={() => openCall(call.id)}
               title={`${label(call)} · ${call.label ?? call.model ?? ''} · ${
-                open ? `running ${ms(now - start)}` : ms(call.durationMs)
+                !open
+                  ? ms(call.durationMs)
+                  : gaveUp
+                    ? 'no result recorded'
+                    : `running ${ms(now - start)}`
               }`}
               className={`relative h-5 w-full rounded-sm hover:bg-light-secondary dark:hover:bg-dark-secondary group ${row.nested ? 'pl-4' : ''}`}
             >
               <span
                 className={`absolute top-1 h-3 rounded-sm overflow-hidden ${barColor(
                   call,
-                )} opacity-80 group-hover:opacity-100 ${open ? 'animate-pulse' : ''}`}
+                )} opacity-80 group-hover:opacity-100 ${
+                  open && !gaveUp ? 'animate-pulse' : ''
+                }`}
                 style={{
                   left: `${offset * 100}%`,
                   width: `${width * 100}%`,

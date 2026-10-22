@@ -3,11 +3,90 @@
 import { Cpu, Loader2, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MinimalProvider } from '@/lib/models/types';
 import { useChat } from '@/lib/hooks/useChat';
 import { AnimatePresence, motion } from 'motion/react';
 import { toast } from 'sonner';
+
+/**
+ * Asks the provider to bring a model's weights into memory, and reports what
+ * happened in a toast that fades.
+ *
+ * Shared by the two ways a model becomes current: the user picking one, and the
+ * page loading with one already selected. The only difference is whether an
+ * already-resident model is worth mentioning -- on an explicit pick it confirms
+ * the click did something, but on page load it is an unprompted toast about
+ * something the user never asked for, so it stays silent.
+ */
+const requestPreload = (
+  providerId: string,
+  modelKey: string,
+  { announceAlreadyLoaded }: { announceAlreadyLoaded: boolean },
+) => {
+  const toastId = `preload-${providerId}-${modelKey}`;
+  let pending: ReturnType<typeof setTimeout> | undefined;
+
+  const request = fetch('/api/models/preload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ providerId, key: modelKey }),
+  })
+    .then((res) => res.json())
+    .then((result) => {
+      clearTimeout(pending);
+
+      if (!result?.supported) {
+        toast.dismiss(toastId);
+        return;
+      }
+
+      /* A context warning outlives the load message: it is a configuration
+       * problem the user has to act on, not a progress report. */
+      if (result.warning) {
+        toast.warning(result.warning, { id: toastId, duration: 10000 });
+        return;
+      }
+
+      if (result.alreadyLoaded) {
+        if (!announceAlreadyLoaded) {
+          toast.dismiss(toastId);
+          return;
+        }
+
+        toast.success(`${modelKey} is already loaded`, {
+          id: toastId,
+          duration: 2500,
+        });
+        return;
+      }
+
+      if (result.loaded) {
+        toast.success(
+          `${modelKey} loaded in ${(result.durationMs / 1000).toFixed(1)}s`,
+          { id: toastId, duration: 4000 },
+        );
+        return;
+      }
+
+      toast.error(`Could not preload ${modelKey}`, {
+        id: toastId,
+        duration: 4000,
+      });
+    })
+    .catch(() => {
+      clearTimeout(pending);
+      toast.dismiss(toastId);
+    });
+
+  /* Only say anything if it is slow enough to be worth a message -- a hosted
+   * provider answers in milliseconds and should stay silent. */
+  pending = setTimeout(() => {
+    toast.loading(`Loading ${modelKey}…`, { id: toastId });
+  }, 600);
+
+  return request;
+};
 
 const ModelSelector = () => {
   const [providers, setProviders] = useState<MinimalProvider[]>([]);
@@ -38,6 +117,31 @@ const ModelSelector = () => {
     loadProviders();
   }, []);
 
+  /* Warm the already-selected model when the page loads, not just when someone
+   * opens the dropdown. Most visits never touch the selector, so without this
+   * the ~26s load landed on the first model call of the first search.
+   *
+   * Keyed off useChat's resolved selection rather than localStorage: on a first
+   * visit nothing is stored yet and useChat falls back to the first configured
+   * model, which is the one the search will actually use.
+   *
+   * Fires once per mount. An explicit pick is already covered by
+   * handleModelSelect, and this component only mounts on the empty-chat screen,
+   * so it does not re-fire while navigating an existing conversation. */
+  const warmed = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!chatModelProvider?.providerId || !chatModelProvider?.key) return;
+
+    const current = `${chatModelProvider.providerId}/${chatModelProvider.key}`;
+    if (warmed.current === current) return;
+    warmed.current = current;
+
+    requestPreload(chatModelProvider.providerId, chatModelProvider.key, {
+      announceAlreadyLoaded: false,
+    });
+  }, [chatModelProvider]);
+
   const orderedProviders = useMemo(() => {
     if (!chatModelProvider?.providerId) return providers;
 
@@ -62,67 +166,11 @@ const ModelSelector = () => {
     localStorage.setItem('chatModelProviderId', providerId);
     localStorage.setItem('chatModelKey', modelKey);
 
-    /* Fire and forget: ask the provider to bring the weights into memory now,
-     * so the load overlaps the user typing instead of landing on the first
-     * model call of the search. Providers with nothing to load report
-     * unsupported and nothing is shown. */
-    const toastId = `preload-${providerId}-${modelKey}`;
-    let pending: ReturnType<typeof setTimeout> | undefined;
-
-    const request = fetch('/api/models/preload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ providerId, key: modelKey }),
-    })
-      .then((res) => res.json())
-      .then((result) => {
-        clearTimeout(pending);
-
-        if (!result?.supported) {
-          toast.dismiss(toastId);
-          return;
-        }
-
-        /* A context warning outlives the load message: it is a configuration
-         * problem the user has to act on, not a progress report. */
-        if (result.warning) {
-          toast.warning(result.warning, { id: toastId, duration: 10000 });
-          return;
-        }
-
-        if (result.alreadyLoaded) {
-          toast.success(`${modelKey} is already loaded`, {
-            id: toastId,
-            duration: 2500,
-          });
-          return;
-        }
-
-        if (result.loaded) {
-          toast.success(
-            `${modelKey} loaded in ${(result.durationMs / 1000).toFixed(1)}s`,
-            { id: toastId, duration: 4000 },
-          );
-          return;
-        }
-
-        toast.error(`Could not preload ${modelKey}`, {
-          id: toastId,
-          duration: 4000,
-        });
-      })
-      .catch(() => {
-        clearTimeout(pending);
-        toast.dismiss(toastId);
-      });
-
-    /* Only say anything if it is slow enough to be worth a message -- a hosted
-     * provider answers in milliseconds and should stay silent. */
-    pending = setTimeout(() => {
-      toast.loading(`Loading ${modelKey}…`, { id: toastId });
-    }, 600);
-
-    return request;
+    /* Fire and forget: the load overlaps the user typing instead of landing on
+     * the first model call of the search. */
+    return requestPreload(providerId, modelKey, {
+      announceAlreadyLoaded: true,
+    });
   };
 
   const filteredProviders = orderedProviders
