@@ -437,7 +437,10 @@ export const executeSearch = async (input: {
             else p.scrape.failed++;
           });
 
-          if (!scrapedData) return;
+          /* `ok` is false when the page was reached but carried no readable
+           * text -- a block page or a JavaScript shell. Same reasoning as the
+           * scrape action: that is not a source. */
+          if (!scrapedData || !scrapedData.ok) return;
 
           let accumulatedContent = '';
           const chunks = splitScrapedContent(scrapedData.content, input.contextPerRequest);

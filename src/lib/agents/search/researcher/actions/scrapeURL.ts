@@ -123,6 +123,11 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             },
           );
 
+          /* A page that could not be read is not a source. Extracting from the
+           * stub wastes a model call and puts an empty "finding" in front of
+           * the writer, which is how two blocked pages became citations. */
+          if (!scraped.ok) return;
+
           if (
             !readingEmitted &&
             researchBlock &&
@@ -196,7 +201,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
 
           let accumulatedContent = '';
 
-          if (chunks.length > 1) {
+          /* Extract however many chunks there are. This used to run only when
+           * a page needed splitting, which conflated "too big for one request"
+           * with "worth reducing to facts" -- and once chunks were sized to the
+           * model's context most pages fit in one, so extraction was being
+           * skipped and raw page text went to the writer. */
+          {
             try {
               await Promise.all(
                 chunks.map(async (chunk) => {
@@ -239,14 +249,6 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
               );
               accumulatedContent = chunks[0];
             }
-          } else {
-            accumulatedContent = scraped.content;
-
-            patchProgress(
-              additionalConfig.session,
-              additionalConfig.researchBlockId,
-              (p) => (p.scrape.chunksDone += chunks.length),
-            );
           }
 
           results.push({
