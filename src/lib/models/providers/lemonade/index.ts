@@ -52,6 +52,75 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     super(id, name, config);
   }
 
+  /* A request needs room for the largest thing the app sends. Measured: an
+   * orchestrator prompt reached 9,148 tokens and was still growing when it
+   * overflowed, a writer prompt runs ~4,200, and an auto-sized chunk plus its
+   * overhead ~14,000. */
+  private static readonly CONTEXT_PER_REQUEST = 16384;
+
+  /* Four rather than more: on realistic prefill-heavy prompts eight concurrent
+   * requests measured 144.4s at 4 slots against 135.7s at 8 -- a 6% gain --
+   * while every extra slot takes context from the request that is most likely
+   * to overflow. (On tiny decode-bound prompts the gain is 2.2x, which is why
+   * the two measurements disagree.) */
+  private static readonly MAX_SLOTS = 4;
+
+  /** The model's context window, read before loading so slots can be derived. */
+  private async contextLength(modelName: string): Promise<number | null> {
+    try {
+      const res = await fetch(this.managementURL('/models'), {
+        headers: this.managementHeaders(),
+      });
+
+      if (!res.ok) return null;
+
+      const body = await res.json();
+      const model = (body.data ?? []).find((m: any) => m.id === modelName);
+
+      return model?.context_length ?? model?.max_context_window ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * How many parallel slots this model can afford.
+   *
+   * llama-server divides --ctx-size between slots, so parallelism and the size
+   * of a single request trade off directly: measured, a 32k model at 4 slots
+   * gives 8,192 per request and rejected a 9,148-token orchestrator prompt,
+   * while the same 4 slots on a 131k model give 32,768 and cost nothing.
+   * Configuring one number by hand is therefore right for one model and wrong
+   * for the next, with nothing to say so.
+   */
+  private async deriveSlots(modelName: string): Promise<number | null> {
+    const context = await this.contextLength(modelName);
+
+    if (!context) return null;
+
+    return Math.max(
+      1,
+      Math.min(
+        LemonadeProvider.MAX_SLOTS,
+        Math.floor(context / LemonadeProvider.CONTEXT_PER_REQUEST),
+      ),
+    );
+  }
+
+  /** What one request can actually hold, from the running process's own flags. */
+  private perRequestContext(record: any): number | null {
+    const args: string[] = (record?.launch_command ?? []).map(String);
+    const at = args.indexOf('--ctx-size');
+
+    if (at === -1) return null;
+
+    const ctx = Number(args[at + 1]);
+    const parallelAt = args.indexOf('--parallel');
+    const slots = parallelAt === -1 ? 1 : Number(args[parallelAt + 1]) || 1;
+
+    return Number.isFinite(ctx) && ctx > 0 ? Math.floor(ctx / slots) : null;
+  }
+
   /* Lemonade's management API sits beside the OpenAI-compatible path: the
    * configured baseURL ends in /v1, the management routes are under /api/v1. */
   private managementURL(path: string) {
@@ -178,17 +247,29 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
      * matches, which made every single search unload and reload the model. */
     if (this.config.llamacppArgs) return this.hasArgs(record);
 
+    /* A model left resident with a different split would never be corrected
+     * otherwise -- the trap that comparing arguments by equality already
+     * caused once today. */
+    const slots = await this.deriveSlots(modelName);
+
+    if (slots) {
+      const args: string[] = (record.launch_command ?? []).map(String);
+      const at = args.indexOf('--parallel');
+
+      if (at === -1 || Number(args[at + 1]) !== slots) return false;
+    }
+
     return true;
   }
 
   async loadModel(modelName: string): Promise<boolean> {
     try {
-      /* Deriving parallelism was tried and reverted on 2026-10-21: sending
-       * llamacpp_args makes Lemonade launch without its own --ctx-size, and
-       * llama.cpp then falls back to n_ctx 4096. A 131k model was rejecting
-       * 4,424-token requests. Only pass arguments somebody asked for, and even
-       * then expect the server's own defaults to be lost. */
-      const args = this.config.llamacppArgs;
+      const derived = this.config.llamacppArgs
+        ? null
+        : await this.deriveSlots(modelName);
+      const args =
+        this.config.llamacppArgs ??
+        (derived ? `--parallel ${derived}` : undefined);
 
       /* llama-server only takes its arguments at process start, so applying
        * them to a resident model means restarting it. Never do that while it is
@@ -226,7 +307,49 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
 
       const data = await res.json();
 
-      return data.status === 'success';
+      if (data.status !== 'success') return false;
+
+      /* Verify rather than assume. On 2026-10-21 a 131k model ended up serving
+       * 4,096 tokens per request -- a tenth of what the flags implied -- and
+       * every search failed for an hour before anyone looked. The cause was
+       * never identified, so this checks the outcome instead: if the running
+       * process is not giving roughly what the arithmetic predicted, drop the
+       * arguments and let the server use its own configuration. */
+      if (derived) {
+        const total = await this.contextLength(modelName);
+
+        if (total) {
+          const predicted = Math.floor(total / derived);
+          const actual = this.perRequestContext(
+            await this.loadedRecord(modelName),
+          );
+
+          /* A tenth of the prediction is the failure that happened; a small
+           * shortfall is just rounding. */
+          if (!actual || actual < predicted * 0.9) {
+            console.warn(
+              `Lemonade gave ${actual ?? 'no'} tokens per request for ${modelName}, ` +
+                `expected about ${predicted}; reloading without arguments.`,
+            );
+
+            await fetch(this.managementURL('/unload'), {
+              method: 'POST',
+              headers: this.managementHeaders(),
+              body: JSON.stringify({ model_name: modelName }),
+            }).catch(() => undefined);
+
+            const retry = await fetch(this.managementURL('/load'), {
+              method: 'POST',
+              headers: this.managementHeaders(),
+              body: JSON.stringify({ model_name: modelName }),
+            });
+
+            return retry.ok;
+          }
+        }
+      }
+
+      return true;
     } catch {
       return false;
     }
