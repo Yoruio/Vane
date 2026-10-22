@@ -9,12 +9,21 @@ const DEFAULT_MAX_CHUNKS = 3;
  * between js-tiktoken here and the model's own tokeniser. */
 export const REQUEST_OVERHEAD_TOKENS = 2000;
 
-/* Measured on a Ryzen AI Max+ 395: reading 12k tokens of a page costs about a
- * minute, and cost is near-linear in tokens. Filling a 32k slot would be a
- * single four-minute call, close enough to the SDK's 600s ceiling to be
- * fragile, and one failure would lose the whole page rather than a chunk of
- * it. Chunking is cost-neutral, so there is nothing to win by going bigger. */
-const AUTO_CHUNK_CEILING = 12000;
+/* The value that worked before any of this was tuned.
+ *
+ * It was briefly raised to 12,000, which was a mistake worth recording: that
+ * number came from the shape of an experiment -- 3x4k against 1x12k, where 12k
+ * only made the comparison fair -- and the experiment's own result was that
+ * chunking is *cost-neutral* (63.8s against 60.5s for the same content). So
+ * there was no measured benefit to larger chunks beyond ~5% fewer round trips,
+ * and the larger size came with a cost: all three observed `?` degeneration
+ * collapses happened on prompts of 12,000+ tokens, while every call at
+ * 1,200-2,800 tokens succeeded.
+ *
+ * Auto-sizing therefore only ever shrinks: it protects against a slot too
+ * small for a chunk, and never pushes a chunk past a size already known to
+ * work. */
+const AUTO_CHUNK_CEILING = 4000;
 
 /* Below this, chunks are too small to extract anything coherent from. */
 export const AUTO_CHUNK_FLOOR = 1000;
