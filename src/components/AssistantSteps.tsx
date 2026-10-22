@@ -404,7 +404,7 @@ const AssistantSteps = ({
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-black dark:text-white" />
               <span className="text-sm font-medium text-black dark:text-white">
-                Model calls ({stats.calls})
+                Tool calls ({stats.calls})
               </span>
             </div>
             {showCalls ? (

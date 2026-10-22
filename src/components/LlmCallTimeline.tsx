@@ -92,7 +92,6 @@ const methodColor: Record<string, string> = {
   streamObject: 'bg-amber-500',
 };
 
-/* Exported: the runs list on /debug/calls formats the same durations. */
 export const ms = (v: number | null | undefined) => {
   if (v === null || v === undefined) return '—';
   if (v < 1000) return `${v} ms`;
@@ -110,8 +109,9 @@ const chars = (v: number | null | undefined) => {
  * The call timeline for one message: one bar per model call on a wall-clock
  * axis, click a bar to inspect it.
  *
- * Shared by the /debug/calls page and the research panel in a chat so the two
- * cannot drift apart.
+ * Rendered inside a chat's research panel. There was a standalone page for
+ * this too; it was removed once the timeline was available where the run
+ * actually happened.
  */
 const LlmCallTimeline = ({ messageId }: { messageId: string }) => {
   const [calls, setCalls] = useState<Call[]>([]);
