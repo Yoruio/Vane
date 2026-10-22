@@ -8,63 +8,6 @@ import { ToolCall } from '@/lib/models/types';
 import { patchProgress, setCurrent } from './progress';
 import { withRole } from '@/lib/models/base/instrumented';
 
-/* How much of each source the orchestrator sees. It is a router -- it decides
- * which tool to call next and when to stop -- so it needs to know what was
- * found, not to read it. Enough to follow a lead mentioned inside a result,
- * which is the one thing a title and URL alone would lose. */
-const GIST_BULLETS = 3;
-const GIST_CHARS = 300;
-
-/* The extractor already returns point-form bullets and is told to keep numbers
- * verbatim ("LiveCodeBench v6: 80.0%", not "improved scores"), so whole bullets
- * are the unit to keep. Cutting at a character count would truncate one
- * mid-number and discard the rest, which is the opposite of what the extractor
- * was careful to produce. */
-const gist = (text: string) => {
-  const bullets = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('-') || line.startsWith('*'));
-
-  if (bullets.length) {
-    const kept = bullets.slice(0, GIST_BULLETS).join('\n  ');
-    const rest = bullets.length - GIST_BULLETS;
-
-    return rest > 0 ? `${kept}\n  (+${rest} more facts)` : kept;
-  }
-
-  /* A plain search snippet rather than extracted facts: already short. */
-  const flat = text.replace(/\s+/g, ' ').trim();
-
-  return flat.length > GIST_CHARS ? `${flat.slice(0, GIST_CHARS)}…` : flat;
-};
-
-/**
- * The orchestrator's record of what a tool returned, in point form.
- *
- * The full text used to go in verbatim, and because the history is re-sent on
- * every iteration it was paid for again each time: one measured run grew from
- * 9,072 to 31,212 characters in four steps, costing 21s, 34s, 51s and then
- * failing on a context overflow. Prefill is near-linear in tokens, so an
- * uncapped history makes a run quadratic in its own findings.
- *
- * Nothing is lost from the answer: the full content reaches the writer by a
- * separate path (`searchFindings`), untouched by this.
- */
-const condenseForHistory = (action: ActionOutput): string => {
-  if (action.type === 'reasoning') return action.reasoning;
-  if (action.type !== 'search_results') return action.type;
-
-  const sources = action.results.map((result, index) => {
-    const title = result.metadata?.title ?? 'Untitled';
-    const url = result.metadata?.url ?? 'no url';
-
-    return `- [${index + 1}] ${title} — ${url}\n  ${gist(result.content ?? '')}`;
-  });
-
-  return `${sources.length} source${sources.length === 1 ? '' : 's'}:\n${sources.join('\n')}`;
-};
-
 class Researcher {
   async research(
     session: SessionManager,
@@ -292,7 +235,7 @@ class Researcher {
           role: 'tool',
           id: finalToolCalls[i].id,
           name: finalToolCalls[i].name,
-          content: condenseForHistory(action),
+          content: JSON.stringify(action),
         });
       });
     }
