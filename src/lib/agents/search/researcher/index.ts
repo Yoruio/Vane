@@ -63,6 +63,7 @@ class Researcher {
               failed: 0,
               chunksDone: 0,
               chunksTotal: 0,
+              chunksFailed: 0,
             },
           },
         },

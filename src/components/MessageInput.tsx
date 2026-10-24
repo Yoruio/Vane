@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import AttachSmall from './MessageInputActions/AttachSmall';
 import { useChat } from '@/lib/hooks/useChat';
+import { toast } from 'sonner';
 
 const MessageInput = () => {
   const { loading, sendMessage } = useChat();
@@ -45,20 +46,34 @@ const MessageInput = () => {
     };
   }, []);
 
+  /* Submitting during a run was silently ignored: the send button is disabled
+   * and Enter falls through the guard below, so the question just sat in the
+   * box with nothing to say why. A research run can spend minutes inside one
+   * orchestrator call, so "nothing is happening" is a reasonable thing to
+   * believe at that moment. Say it instead. */
+  const explainBusy = () =>
+    toast.info('Still answering the previous question. Your text is kept — send it when this one finishes.', {
+      id: 'busy-input',
+      duration: 3000,
+    });
+
+  const submit = (e: { preventDefault: () => void }) => {
+    if (loading) {
+      e.preventDefault();
+      explainBusy();
+      return;
+    }
+
+    e.preventDefault();
+    sendMessage(message);
+    setMessage('');
+  };
+
   return (
     <form
-      onSubmit={(e) => {
-        if (loading) return;
-        e.preventDefault();
-        sendMessage(message);
-        setMessage('');
-      }}
+      onSubmit={submit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !loading) {
-          e.preventDefault();
-          sendMessage(message);
-          setMessage('');
-        }
+        if (e.key === 'Enter' && !e.shiftKey) submit(e);
       }}
       className={cn(
         'relative bg-light-secondary dark:bg-dark-secondary p-4 flex items-center overflow-visible border border-light-200 dark:border-dark-200 shadow-sm shadow-light-200/10 dark:shadow-black/20 transition-all duration-200 focus-within:border-light-300 dark:focus-within:border-dark-300',

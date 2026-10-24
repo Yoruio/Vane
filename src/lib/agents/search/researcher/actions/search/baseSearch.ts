@@ -10,7 +10,11 @@ import Scraper from '@/lib/scraper';
 import { patchProgress } from '../../progress';
 import { CallContext, timeCall } from '@/lib/telemetry';
 import { withRole } from '@/lib/models/base/instrumented';
-import { splitScrapedContent } from '../../chunking';
+import { extractFacts } from '../../extract';
+
+/* Enough of a result to judge relevance against the query. The picker reads
+ * titles and URLs plus this much text; it does not need the page. */
+const PICKER_SNIPPET_CHARS = 300;
 
 /* The sub-step is display-only, and the UI reads just the url and title.
  * Emitting the pipeline's own objects would ship metadata.embedding -- a full
@@ -293,6 +297,18 @@ export const executeSearch = async (input: {
       </example_output>
       `;
 
+    /* The picker only has to choose indices, so it needs enough to recognise a
+     * result, not the whole object. `JSON.stringify(result)` sent the full
+     * scraped content plus metadata -- including the embedding field -- which
+     * is how a call whose entire output is `{"picked_indices":[0,2,4]}` came to
+     * cost 20,000-24,000 tokens of prefill: six of them took 21 minutes of a
+     * 46-minute quality run, 1,273s to emit under 31 characters each. */
+    const forPicker = (result: (typeof searchResults)[number]) => ({
+      title: result.metadata?.title ?? '',
+      url: result.metadata?.url ?? '',
+      snippet: (result.content ?? '').slice(0, PICKER_SNIPPET_CHARS),
+    });
+
     const pickerSchema = z.object({
       picked_indices: z
         .array(z.number())
@@ -313,7 +329,7 @@ export const executeSearch = async (input: {
         },
         {
           role: 'user',
-          content: `<queries>${input.queries.join(', ')}</queries>\n<search_results>${searchResults.map((result, index) => `<result indice=${index}>${JSON.stringify(result)}</result>`).join('\n')}</search_results>`,
+          content: `<queries>${input.queries.join(', ')}</queries>\n<search_results>${searchResults.map((result, index) => `<result indice=${index}>${JSON.stringify(forPicker(result))}</result>`).join('\n')}</search_results>`,
         },
       ],
     });
@@ -355,47 +371,7 @@ export const executeSearch = async (input: {
 
     const extractedFacts: Chunk[] = [];
 
-    const extractorPrompt = `
-      Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
 
-      ## Things to taken into consideration when extracting information:
-      1. Relevance to the query: The extracted information must dynamically adjust based on the query's intent. If the query asks "What is [X]", you must extract the definition/identity. If the query asks for "[X] specs" or "features", you must provide deep, granular technical details.
-         - Example: For "What is [Product]", extract the core definition. For "[Product] capabilities", extract every technical function mentioned.
-      2. Concentrate on extracting factual information that can help in answering the question rather than opinions or commentary. Ignore marketing fluff like "best-in-class" or "seamless."
-      3. Noise to signal ratio: If the scraped data is noisy (headers, footers, UI text), ignore it and extract only the high-value information. 
-         - Example: Discard "Click for more" or "Subscribe now" messages.
-      4. Avoid using filler sentences or words; extract concise, telegram-style information.
-         - Example: Change "The device features a weight of only 1.2kg" to "Weight: 1.2kg."
-      5. Duplicate information: If a fact appears multiple times (e.g., in a paragraph and a technical table), merge the details into a single, high-density bullet point to avoid redundancy.
-      6. Numerical Data Integrity: NEVER summarize or generalize numbers, benchmarks, or table data. Extract raw values exactly as they appear.
-         - Example: Do not say "Improved coding scores." Say "LiveCodeBench v6: 80.0%."
-
-      ## Example
-      For example, if the query is "What are the health benefits of green tea?" and the scraped data contains various pieces of information about green tea, Assistant should focus on extracting factual information related to the health benefits of green tea such as "Green tea contains antioxidants which can help in reducing inflammation" and ignore irrelevant information such as "Green tea is a popular beverage worldwide".
-      
-      It can also remove filler words to reduce the sentence to "Contains antioxidants; reduces inflammation." 
-      
-      For tables/numerical data extraction, Assistant should extract the raw numerical data or the content of the table without trying to summarize it to avoid losing important details. For example, if a table lists specific battery life hours for different modes, Assistant should list every mode and its corresponding hour count rather than giving a general average.
-      
-      Make sure the extracted facts are in bullet points format to make it easier to read and understand.
-
-      ## Output format
-      Assistant should reply with a JSON object containing a key "extracted_facts" which is a string of the bulleted facts. Return only raw JSON without markdown formatting (no \`\`\`json blocks).
-
-      <example_output>
-      {
-        "extracted_facts": "- Fact 1\n- Fact 2\n- Fact 3"
-      }
-      </example_output>
-      `;
-
-    const extractorSchema = z.object({
-      extracted_facts: z
-        .string()
-        .describe(
-          'The extracted facts that are relevant to the query and can help in answering the question should be listed here in a concise manner.',
-        ),
-    });
 
     await Promise.all(
       filteredResults.map(async (result, i) => {
@@ -442,53 +418,36 @@ export const executeSearch = async (input: {
            * scrape action: that is not a source. */
           if (!scrapedData || !scrapedData.ok) return;
 
-          let accumulatedContent = '';
-          const chunks = splitScrapedContent(scrapedData.content, input.contextPerRequest);
+          const extraction = await extractFacts({
+            llm: input.llm,
+            content: scrapedData.content,
+            queries: input.queries,
+            session: input.session,
+            researchBlockId: researchBlock.id,
+            contextPerRequest: input.contextPerRequest,
+          });
 
-          patchProgress(
-            input.session,
-            researchBlock.id,
-            (p) => (p.scrape.chunksTotal += chunks.length),
-          );
+          /* A page whose every chunk failed has no facts, and citing it would
+           * put a source in the answer that nothing was read from -- the same
+           * mistake as citing a bot-blocked page. Drop it and say so. */
+          if (extraction.chunksTotal > 0 && !extraction.content.trim()) {
+            console.error(
+              `Extraction produced nothing for ${result.metadata.url}; ` +
+                `${extraction.chunksFailed}/${extraction.chunksTotal} chunks failed. Dropping the source.`,
+            );
+            return;
+          }
 
-          await Promise.all(
-            chunks.map(async (chunk) => {
-              try {
-                const extractorOutput = await withRole(
-                  input.llm,
-                  'extractor',
-                ).generateObject<
-                  typeof extractorSchema
-                >({
-                  schema: extractorSchema,
-                  messages: [
-                    {
-                      role: 'system',
-                      content: extractorPrompt,
-                    },
-                    {
-                      role: 'user',
-                      content: `<queries>${input.queries.join(', ')}</queries>\n<scraped_data>${chunk}</scraped_data>`,
-                    },
-                  ],
-                });
-
-                accumulatedContent += extractorOutput.extracted_facts + '\n';
-
-                patchProgress(
-                  input.session,
-                  researchBlock.id,
-                  (p) => p.scrape.chunksDone++,
-                );
-              } catch (err) {
-                console.log('Error extracting information from chunk', err);
-              }
-            }),
-          );
+          if (extraction.chunksFailed > 0) {
+            console.error(
+              `Partial extraction for ${result.metadata.url}: ` +
+                `${extraction.chunksFailed} of ${extraction.chunksTotal} chunks failed.`,
+            );
+          }
 
           extractedFacts.push({
             ...result,
-            content: accumulatedContent,
+            content: extraction.content,
           });
         } catch (err) {
           console.log(

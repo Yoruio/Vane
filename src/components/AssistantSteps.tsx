@@ -216,6 +216,14 @@ const AssistantSteps = ({
           {progress.scrape.chunksTotal > 0 && (
             <span>
               {progress.scrape.chunksDone}/{progress.scrape.chunksTotal} chunks
+              {/* A failed chunk is lost facts, not a slow one, and it used to
+                * only ever reach container stdout. */}
+              {progress.scrape.chunksFailed > 0 && (
+                <span className="text-red-500">
+                  {' '}
+                  ({progress.scrape.chunksFailed} failed)
+                </span>
+              )}
             </span>
           )}
           {stats && stats.calls > 0 && (

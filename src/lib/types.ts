@@ -135,6 +135,9 @@ export type ResearchProgress = {
     failed: number;
     chunksDone: number;
     chunksTotal: number;
+    /* Chunks whose extraction errored. Counted rather than logged, so a run
+     * that lost facts to model failures does not look like a thin page. */
+    chunksFailed: number;
   };
 };
 

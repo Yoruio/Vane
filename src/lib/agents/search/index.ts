@@ -13,11 +13,30 @@ import configManager from '@/lib/config';
 import { withRole } from '@/lib/models/base/instrumented';
 import { setCurrent } from './researcher/progress';
 
-/* A generous ceiling rather than a tight one: a reasoning model spends part of
- * its budget thinking before it answers, so a tight cap would turn a slow
- * answer into no answer. This exists to stop an unbounded run, not to shape
- * the response. */
-const WRITER_MAX_TOKENS = 8192;
+/* Per mode, because the modes ask for answers of genuinely different lengths
+ * and one ceiling cannot fit them. The writer prompt tells quality mode its
+ * answer "SHALL NOT BE LESS THAN AT LEAST 2000 WORDS" -- roughly 2,700 tokens
+ * -- so a flat cap tuned for speed mode would truncate every quality answer
+ * mid-sentence.
+ *
+ * Tightened from a flat 8,192 once thinking was disabled for this role. That
+ * ceiling was generous because a reasoning model spends part of its budget
+ * thinking before it answers, so a tight cap turned a slow answer into no
+ * answer; with thinking off the whole budget is answer.
+ *
+ * Note what a cap can and cannot do. It truncates; it does not make a model
+ * concise. It bounds the worst case -- the first run without thinking spent the
+ * reclaimed budget on a 2,568-character answer rather than finishing sooner --
+ * but a genuinely shorter answer has to come from the prompt. Each value sits
+ * well above what that mode has been observed to produce, so normal output is
+ * never cut. */
+const WRITER_MAX_TOKENS: Record<'speed' | 'balanced' | 'quality', number> = {
+  /* Observed ~650 tokens for a one-line question. */
+  speed: 1536,
+  balanced: 3072,
+  /* The prompt's own 2,000-word floor, with room to land the ending. */
+  quality: 8192,
+};
 
 /* A quantised model can collapse into emitting one character forever. Observed
  * on 2026-10-21: 26,407 '?' characters streamed over 54 minutes, stored as the
@@ -144,6 +163,7 @@ class SearchAgent {
             failed: 0,
             chunksDone: 0,
             chunksTotal: 0,
+            chunksFailed: 0,
           },
         },
       },
@@ -235,7 +255,14 @@ class SearchAgent {
     setCurrent(session, researchBlockId, 'writing', 'Writing the answer');
 
     const answerStream = withRole(input.config.llm, 'writer').streamText({
-      options: { maxTokens: WRITER_MAX_TOKENS },
+      /* The writer composes from facts the extractor already pulled out, so
+       * what it needs is citation discipline, not deliberation -- and thinking
+       * costs it roughly double the wall time. The roles that actually choose
+       * something, the classifier and the orchestrator, keep theirs. */
+      options: {
+        maxTokens: WRITER_MAX_TOKENS[input.config.mode],
+        disableThinking: true,
+      },
       messages: [
         {
           role: 'system',

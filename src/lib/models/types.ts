@@ -35,6 +35,10 @@ type GenerateOptions = {
   stopSequences?: string[];
   frequencyPenalty?: number;
   presencePenalty?: number;
+  /* Ask a reasoning model to answer without thinking first. Honoured only by
+   * providers that can express it -- a hosted API has no chat template to
+   * parameterise -- so it is a hint, not a guarantee. */
+  disableThinking?: boolean;
 };
 
 type Tool = {

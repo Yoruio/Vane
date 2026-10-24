@@ -52,20 +52,34 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     super(id, name, config);
   }
 
-  /* A request needs room for the largest thing the app sends. Measured: an
-   * orchestrator prompt reached 9,148 tokens and was still growing when it
-   * overflowed, a writer prompt runs ~4,200, and an auto-sized chunk plus its
-   * overhead ~14,000. */
-  private static readonly CONTEXT_PER_REQUEST = 16384;
+  /**
+   * One slot, always.
+   *
+   * Slots were derived from the context window on the theory that more slots
+   * meant more throughput. Measured on 2026-10-24 with the same binary, the
+   * same 20 prompts and only --parallel varied:
+   *
+   *   --parallel 1  ->  20/20 ok,  0 grammar crashes, mean 146s (4 clients)
+   *   --parallel 2  ->   0/20 ok, 19 grammar crashes
+   *   --parallel 4  ->   1/20 ok, 19 grammar crashes
+   *
+   * More than one slot breaks grammar-constrained generation outright: every
+   * generateObject call -- extractor, picker, classifier -- fails with
+   * llama.cpp's "Unexpected empty grammar stack after accepting piece: ? (30)".
+   * Upstream has this open as #30419 with no fix, and the related reports only
+   * soften the crash rather than prevent it.
+   *
+   * One slot is also faster here: 32.4s mean for an extraction against 146s,
+   * and it gives every request the model's whole context instead of a
+   * fraction, which removes the overflow problem the derivation existed to
+   * manage. Nothing is given up: the earlier "4 slots beat 8" measurement was
+   * a 6% difference on prefill-heavy prompts, and nine concurrent extractor
+   * calls were measured spreading 28s-212s, i.e. queueing rather than
+   * parallelism.
+   */
+  private static readonly SLOTS = 1;
 
-  /* Four rather than more: on realistic prefill-heavy prompts eight concurrent
-   * requests measured 144.4s at 4 slots against 135.7s at 8 -- a 6% gain --
-   * while every extra slot takes context from the request that is most likely
-   * to overflow. (On tiny decode-bound prompts the gain is 2.2x, which is why
-   * the two measurements disagree.) */
-  private static readonly MAX_SLOTS = 4;
-
-  /** The model's context window, read before loading so slots can be derived. */
+  /** The model's context window, used to verify what a load actually gave us. */
   private async contextLength(modelName: string): Promise<number | null> {
     try {
       const res = await fetch(this.managementURL('/models'), {
@@ -81,30 +95,6 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * How many parallel slots this model can afford.
-   *
-   * llama-server divides --ctx-size between slots, so parallelism and the size
-   * of a single request trade off directly: measured, a 32k model at 4 slots
-   * gives 8,192 per request and rejected a 9,148-token orchestrator prompt,
-   * while the same 4 slots on a 131k model give 32,768 and cost nothing.
-   * Configuring one number by hand is therefore right for one model and wrong
-   * for the next, with nothing to say so.
-   */
-  private async deriveSlots(modelName: string): Promise<number | null> {
-    const context = await this.contextLength(modelName);
-
-    if (!context) return null;
-
-    return Math.max(
-      1,
-      Math.min(
-        LemonadeProvider.MAX_SLOTS,
-        Math.floor(context / LemonadeProvider.CONTEXT_PER_REQUEST),
-      ),
-    );
   }
 
   /** What one request can actually hold, from the running process's own flags. */
@@ -250,13 +240,14 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
     /* A model left resident with a different split would never be corrected
      * otherwise -- the trap that comparing arguments by equality already
      * caused once today. */
-    const slots = await this.deriveSlots(modelName);
+    const args: string[] = (record.launch_command ?? []).map(String);
+    const at = args.indexOf('--parallel');
 
-    if (slots) {
-      const args: string[] = (record.launch_command ?? []).map(String);
-      const at = args.indexOf('--parallel');
-
-      if (at === -1 || Number(args[at + 1]) !== slots) return false;
+    /* A model left resident with a different split would never be corrected
+     * otherwise, and more than one slot is not a performance choice here --
+     * it breaks every structured call. */
+    if (at === -1 || Number(args[at + 1]) !== LemonadeProvider.SLOTS) {
+      return false;
     }
 
     return true;
@@ -264,12 +255,8 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
 
   async loadModel(modelName: string): Promise<boolean> {
     try {
-      const derived = this.config.llamacppArgs
-        ? null
-        : await this.deriveSlots(modelName);
       const args =
-        this.config.llamacppArgs ??
-        (derived ? `--parallel ${derived}` : undefined);
+        this.config.llamacppArgs ?? `--parallel ${LemonadeProvider.SLOTS}`;
 
       /* llama-server only takes its arguments at process start, so applying
        * them to a resident model means restarting it. Never do that while it is
@@ -315,11 +302,11 @@ class LemonadeProvider extends BaseModelProvider<LemonadeConfig> {
        * never identified, so this checks the outcome instead: if the running
        * process is not giving roughly what the arithmetic predicted, drop the
        * arguments and let the server use its own configuration. */
-      if (derived) {
+      {
         const total = await this.contextLength(modelName);
 
         if (total) {
-          const predicted = Math.floor(total / derived);
+          const predicted = Math.floor(total / LemonadeProvider.SLOTS);
           const actual = this.perRequestContext(
             await this.loadedRecord(modelName),
           );

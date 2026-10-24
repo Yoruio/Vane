@@ -32,6 +32,19 @@ type OpenAIConfig = {
 class OpenAILLM extends BaseLLM<OpenAIConfig> {
   openAIClient: OpenAI;
 
+  /**
+   * Extra request-body fields for this provider.
+   *
+   * Empty here on purpose: how you turn off a model's thinking is
+   * provider-specific, and OpenAI itself rejects fields it does not know. A
+   * subclass that can express it overrides this.
+   */
+  protected extraBody(
+    options?: GenerateOptions,
+  ): Record<string, unknown> {
+    return {};
+  }
+
   constructor(protected config: OpenAIConfig) {
     super(config);
 
@@ -112,6 +125,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
         this.config.options?.frequencyPenalty,
       presence_penalty:
         input.options?.presencePenalty ?? this.config.options?.presencePenalty,
+      ...this.extraBody(input.options),
     });
 
     if (response.choices && response.choices.length > 0) {
@@ -189,6 +203,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
             input.options?.presencePenalty ??
             this.config.options?.presencePenalty,
           stream: true,
+          ...this.extraBody(input.options),
         },
         { signal: controller.signal },
       );
@@ -295,6 +310,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
       presence_penalty:
         input.options?.presencePenalty ?? this.config.options?.presencePenalty,
       response_format: zodResponseFormat(input.schema, 'object'),
+      ...this.extraBody(input.options),
     });
 
     if (response.choices && response.choices.length > 0) {
