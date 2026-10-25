@@ -37,6 +37,10 @@ const bodySchema = z.object({
   optimizationMode: z.enum(['speed', 'balanced', 'quality'], {
     message: 'Optimization mode must be one of: speed, balanced, quality',
   }),
+  /* How much prose to write, separate from how much research to do. Omitted
+   * means "follow the mode", which is what the UI sends unless the user has
+   * chosen a style explicitly. */
+  answerStyle: z.enum(['brief', 'standard', 'deep']).optional(),
   sources: z.array(z.string()).optional().default([]),
   history: z
     .array(z.tuple([z.string(), z.string()]))
@@ -238,6 +242,7 @@ export const POST = async (req: Request) => {
           embedding: embedding,
           sources: body.sources as SearchSources[],
           mode: body.optimizationMode,
+          answerStyle: body.answerStyle,
           fileIds: body.files,
           systemInstructions: body.systemInstructions || 'None',
           contextPerRequest: modelReady.contextPerSlot,

@@ -2,7 +2,10 @@ import { ResearcherOutput, SearchAgentInput } from './types';
 import SessionManager from '@/lib/session';
 import { classify } from './classifier';
 import Researcher from './researcher';
-import { getWriterPrompt } from '@/lib/prompts/search/writer';
+import {
+  defaultAnswerStyle,
+  getWriterPrompt,
+} from '@/lib/prompts/search/writer';
 import { WidgetExecutor } from './widgets';
 import db from '@/lib/db';
 import { messages } from '@/lib/db/schema';
@@ -30,12 +33,16 @@ import { setCurrent } from './researcher/progress';
  * but a genuinely shorter answer has to come from the prompt. Each value sits
  * well above what that mode has been observed to produce, so normal output is
  * never cut. */
-const WRITER_MAX_TOKENS: Record<'speed' | 'balanced' | 'quality', number> = {
-  /* Observed ~650 tokens for a one-line question. */
-  speed: 1536,
-  balanced: 3072,
-  /* The prompt's own 2,000-word floor, with room to land the ending. */
-  quality: 8192,
+const WRITER_MAX_TOKENS: Record<'brief' | 'standard' | 'deep', number> = {
+  /* Keyed on answer style rather than mode, because style is what decides how
+   * long the answer is: a quality-mode run asked for a brief answer should not
+   * carry an 8,192-token ceiling. Each value sits well above what that style
+   * has been observed to produce, so normal output is never cut -- a cap
+   * truncates, it does not make a model concise. */
+  brief: 1024,
+  standard: 3072,
+  /* The deep prompt asks for a research report, ~2,000 words. */
+  deep: 8192,
 };
 
 /* A quantised model can collapse into emitting one character forever. Observed
@@ -246,10 +253,14 @@ class SearchAgent {
 
     const finalContextWithWidgets = `<search_results note="These are the search results and assistant can cite these">\n${finalContext}\n</search_results>\n<widgets_result noteForAssistant="Its output is already showed to the user, assistant can use this information to answer the query but do not CITE this as a souce">\n${widgetContext}\n</widgets_result>`;
 
+    const answerStyle =
+      input.config.answerStyle ?? defaultAnswerStyle(input.config.mode);
+
     const writerPrompt = getWriterPrompt(
       finalContextWithWidgets,
       input.config.systemInstructions,
       input.config.mode,
+      answerStyle,
     );
 
     setCurrent(session, researchBlockId, 'writing', 'Writing the answer');
@@ -260,7 +271,7 @@ class SearchAgent {
        * costs it roughly double the wall time. The roles that actually choose
        * something, the classifier and the orchestrator, keep theirs. */
       options: {
-        maxTokens: WRITER_MAX_TOKENS[input.config.mode],
+        maxTokens: WRITER_MAX_TOKENS[answerStyle],
         disableThinking: true,
       },
       messages: [

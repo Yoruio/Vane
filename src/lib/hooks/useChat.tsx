@@ -815,6 +815,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         files: fileIds,
         sources: sources,
         optimizationMode: optimizationMode,
+        /* Omitted when set to "auto", which lets the server apply the mode's
+         * own default rather than this client hardcoding the mapping. */
+        ...(() => {
+          const style = localStorage.getItem('answerStyle');
+          return style && style !== 'auto' ? { answerStyle: style } : {};
+        })(),
         history: rewrite
           ? chatHistory.current.slice(
               0,

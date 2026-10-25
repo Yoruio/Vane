@@ -62,6 +62,34 @@ class ConfigManager {
         scope: 'client',
       },
       {
+        name: 'Answer length',
+        key: 'answerStyle',
+        type: 'select',
+        options: [
+          {
+            name: 'Match research depth',
+            value: 'auto',
+          },
+          {
+            name: 'Brief — answer the question',
+            value: 'brief',
+          },
+          {
+            name: 'Standard — short, light structure',
+            value: 'standard',
+          },
+          {
+            name: 'Deep — full written report',
+            value: 'deep',
+          },
+        ],
+        required: false,
+        description:
+          'How much prose to write, separate from how much searching to do. "Match research depth" uses brief for speed, standard for balanced and deep for quality.',
+        default: 'auto',
+        scope: 'client',
+      },
+      {
         name: 'Auto video & image search',
         key: 'autoMediaSearch',
         type: 'switch',

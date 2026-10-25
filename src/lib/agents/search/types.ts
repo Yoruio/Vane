@@ -13,6 +13,9 @@ export type SearchAgentConfig = {
   llm: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
   mode: 'speed' | 'balanced' | 'quality';
+  /* Answer length, independent of research depth. Undefined means the mode's
+   * default (see defaultAnswerStyle). */
+  answerStyle?: 'brief' | 'standard' | 'deep';
   systemInstructions: string;
   /* How many tokens one request to this model can actually hold. Known only
    * for providers that report it, and it is the per-slot figure rather than the
