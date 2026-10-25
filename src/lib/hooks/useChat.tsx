@@ -46,6 +46,7 @@ type ChatContext = {
   sources: string[];
   chatId: string | undefined;
   optimizationMode: string;
+  answerStyle: string;
   isMessagesLoaded: boolean;
   loading: boolean;
   notFound: boolean;
@@ -58,6 +59,7 @@ type ChatContext = {
   callStats: CallStats | null;
   setResearchEnded: (ended: boolean) => void;
   setOptimizationMode: (mode: string) => void;
+  setAnswerStyle: (style: string) => void;
   setSources: (sources: string[]) => void;
   setFiles: (files: File[]) => void;
   setFileIds: (fileIds: string[]) => void;
@@ -263,6 +265,7 @@ export const chatContext = createContext<ChatContext>({
   sections: [],
   notFound: false,
   optimizationMode: '',
+  answerStyle: 'auto',
   chatModelProvider: { key: '', providerId: '' },
   embeddingModelProvider: { key: '', providerId: '' },
   researchEnded: false,
@@ -273,6 +276,7 @@ export const chatContext = createContext<ChatContext>({
   setFiles: () => {},
   setSources: () => {},
   setOptimizationMode: () => {},
+  setAnswerStyle: () => {},
   setChatModelProvider: () => {},
   setEmbeddingModelProvider: () => {},
   setResearchEnded: () => {},
@@ -346,6 +350,20 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
   const [sources, setSources] = useState<string[]>(['web']);
   const [optimizationMode, setOptimizationMode] = useState('speed');
+
+  /* Shares its key with the Preferences setting, so the inline slider and the
+   * settings dropdown are two views of one value. Read lazily because
+   * localStorage does not exist during server render. */
+  const [answerStyle, setAnswerStyleState] = useState('auto');
+
+  useEffect(() => {
+    setAnswerStyleState(localStorage.getItem('answerStyle') ?? 'auto');
+  }, []);
+
+  const setAnswerStyle = (style: string) => {
+    setAnswerStyleState(style);
+    localStorage.setItem('answerStyle', style);
+  };
 
   const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
 
@@ -817,10 +835,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         optimizationMode: optimizationMode,
         /* Omitted when set to "auto", which lets the server apply the mode's
          * own default rather than this client hardcoding the mapping. */
-        ...(() => {
-          const style = localStorage.getItem('answerStyle');
-          return style && style !== 'auto' ? { answerStyle: style } : {};
-        })(),
+        ...(answerStyle && answerStyle !== 'auto' ? { answerStyle } : {}),
         history: rewrite
           ? chatHistory.current.slice(
               0,
@@ -885,10 +900,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         messageAppeared,
         notFound,
         optimizationMode,
+        answerStyle,
         setFileIds,
         setFiles,
         setSources,
         setOptimizationMode,
+        setAnswerStyle,
         rewrite,
         sendMessage,
         setChatModelProvider,

@@ -3,6 +3,7 @@ import { ArrowUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import AttachSmall from './MessageInputActions/AttachSmall';
+import AnswerLength from './MessageInputActions/AnswerLength';
 import { useChat } from '@/lib/hooks/useChat';
 import { toast } from 'sonner';
 
@@ -101,7 +102,10 @@ const MessageInput = () => {
       )}
       {mode === 'multi' && (
         <div className="flex flex-row items-center justify-between w-full pt-2">
-          <AttachSmall />
+          <div className="flex flex-row items-center space-x-2">
+            <AttachSmall />
+            <AnswerLength />
+          </div>
           <button
             disabled={message.trim().length === 0 || loading}
             className="bg-[#24A0ED] text-white disabled:text-black/50 dark:disabled:text-white/50 hover:bg-opacity-85 transition duration-100 disabled:bg-[#e0e0dc79] dark:disabled:bg-[#ececec21] rounded-full p-2"
