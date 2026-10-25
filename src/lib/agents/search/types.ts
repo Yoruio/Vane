@@ -3,6 +3,7 @@ import BaseLLM from '../../models/base/llm';
 import BaseEmbedding from '@/lib/models/base/embedding';
 import SessionManager from '@/lib/session';
 import { ChatTurnMessage, Chunk } from '@/lib/types';
+import { CallContext } from '@/lib/telemetry';
 
 export type SearchSources = 'web' | 'discussions' | 'academic';
 
@@ -12,7 +13,18 @@ export type SearchAgentConfig = {
   llm: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
   mode: 'speed' | 'balanced' | 'quality';
+  /* Answer length, independent of research depth. Undefined means the mode's
+   * default (see defaultAnswerStyle). */
+  answerStyle?: 'brief' | 'standard' | 'deep';
   systemInstructions: string;
+  /* How many tokens one request to this model can actually hold. Known only
+   * for providers that report it, and it is the per-slot figure rather than the
+   * model's nominal window: llama-server divides its context between parallel
+   * slots, so a 131k model can mean 11k per request. */
+  contextPerRequest?: number;
+  // Identity of `llm` above, for recording which model answered. The loaded
+  // model instance does not expose this.
+  chatModel?: { provider: string; model: string };
 };
 
 export type SearchAgentInput = {
@@ -66,6 +78,14 @@ export type AdditionalConfig = {
   llm: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
   session: SessionManager;
+  /* So search and scrape timings can be attributed to the same message as the
+   * model calls, and land on one timeline. */
+  callContext?: CallContext;
+  /* What the user actually asked, for actions that extract from a page: the
+   * extractor compresses a chunk to a few hundred characters and needs to know
+   * what to keep. */
+  query?: string;
+  contextPerRequest?: number;
 };
 
 export type ResearcherInput = {
@@ -73,6 +93,11 @@ export type ResearcherInput = {
   followUp: string;
   classification: ClassifierOutput;
   config: SearchAgentConfig;
+  callContext?: CallContext;
+  /* The agent creates the block before classification so the status line covers
+   * the whole run. Optional because the API agent has no block of its own; the
+   * researcher makes one when it is not given. */
+  researchBlockId?: string;
 };
 
 export type ResearcherOutput = {

@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Activity,
   Brain,
   Search,
   FileText,
@@ -12,6 +13,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { ResearchBlock, ResearchBlockSubStep } from '@/lib/types';
 import { useChat } from '@/lib/hooks/useChat';
+import { cn } from '@/lib/utils';
+import LlmCallTimeline from './LlmCallTimeline';
 
 const getStepIcon = (step: ResearchBlockSubStep) => {
   if (step.type === 'reasoning') {
@@ -52,19 +55,80 @@ const getStepTitle = (
   return 'Processing';
 };
 
+const formatElapsed = (totalMs: number) => {
+  const seconds = Math.max(Math.floor(totalMs / 1000), 0);
+
+  if (seconds < 60) return `${seconds}s`;
+
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+};
+
 const AssistantSteps = ({
   block,
+  messageId,
   status,
   isLast,
 }: {
   block: ResearchBlock;
+  messageId: string;
   status: 'answering' | 'completed' | 'error';
   isLast: boolean;
 }) => {
   const [isExpanded, setIsExpanded] = useState(
     isLast && status === 'answering' ? true : false,
   );
-  const { researchEnded, loading } = useChat();
+  const { researchEnded, loading, callStats } = useChat();
+  const progress = block.data.progress;
+  const isRunning = status === 'answering' && !researchEnded;
+  const [now, setNow] = useState(() => Date.now());
+  const [showCalls, setShowCalls] = useState(false);
+
+  /* A finished run measures to finishedAt; measuring to startedAt would render
+   * 0s every time an old chat is reopened. */
+  const elapsedMs = progress
+    ? (isRunning
+        ? now
+        : Date.parse(progress.finishedAt ?? progress.startedAt)) -
+      Date.parse(progress.startedAt)
+    : 0;
+
+  /* useChat polls this only while a run is live, so a reopened chat would show
+   * elapsed time with no model time beside it. Fetch it once instead. */
+  const [finishedStats, setFinishedStats] = useState<{
+    calls: number;
+    errors: number;
+    modelMs: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (isRunning || !progress) return;
+
+    let cancelled = false;
+
+    fetch(
+      `/api/debug/llm-calls?messageId=${encodeURIComponent(messageId)}&summary=1`,
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data.summary) setFinishedStats(data.summary);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRunning, messageId, progress]);
+
+  const stats = isRunning ? callStats : finishedStats;
+
+  /* Elapsed is ticked here rather than pushed from the server, which only
+   * sends startedAt once. */
+  useEffect(() => {
+    if (!isRunning || !progress) return;
+
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [isRunning, progress?.startedAt]);
 
   useEffect(() => {
     if (researchEnded && isLast) {
@@ -74,7 +138,11 @@ const AssistantSteps = ({
     }
   }, [researchEnded, status]);
 
-  if (!block || block.data.subSteps.length === 0) return null;
+  /* Progress alone is enough to render: speed mode emits no sub-steps at all
+   * (__reasoning_preamble is disabled there), and every mode has a gap before
+   * the first one arrives. */
+  if (!block || (block.data.subSteps.length === 0 && !block.data.progress))
+    return null;
 
   return (
     <div className="rounded-lg bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200 overflow-hidden">
@@ -95,6 +163,79 @@ const AssistantSteps = ({
           <ChevronDown className="w-4 h-4 text-black/70 dark:text-white/70" />
         )}
       </button>
+
+      {progress && (
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-x-3 gap-y-1 px-3 pb-3 text-xs',
+            status === 'error'
+              ? 'text-red-500'
+              : 'text-black/70 dark:text-white/70',
+          )}
+        >
+          {/* The status line leads, because it is the thing a waiting user wants:
+            * what is happening right now, and for how long. */}
+          {isRunning && progress.current && (
+            <span className="flex items-center gap-1.5 text-black dark:text-white">
+              <span className="h-1.5 w-1.5 rounded-full bg-black/60 dark:bg-white/60 animate-pulse" />
+              {progress.current}
+              {progress.currentSince && (
+                <span className="text-black/50 dark:text-white/50">
+                  {formatElapsed(now - Date.parse(progress.currentSince))}
+                </span>
+              )}
+            </span>
+          )}
+          <span className="text-black/70 dark:text-white/70">
+            {progress.phase === 'done'
+              ? 'Finishing'
+              : progress.maxIterations > 0
+                ? `Step ${progress.iteration}/${progress.maxIterations}`
+                : 'Starting'}
+          </span>
+          <span>{progress.mode}</span>
+          <span>
+            {formatElapsed(elapsedMs)}
+          </span>
+          {progress.phase !== 'done' && <span>{progress.phase}</span>}
+          {(progress.scrape.completed > 0 ||
+            progress.scrape.failed > 0 ||
+            progress.scrape.inFlight > 0) && (
+            <span>
+              {progress.scrape.completed} read
+              {progress.scrape.failed > 0 && (
+                <span className="text-red-500">
+                  {' '}
+                  ({progress.scrape.failed} failed)
+                </span>
+              )}
+              {progress.scrape.inFlight > 0 &&
+                ` · ${progress.scrape.inFlight} in flight`}
+            </span>
+          )}
+          {progress.scrape.chunksTotal > 0 && (
+            <span>
+              {progress.scrape.chunksDone}/{progress.scrape.chunksTotal} chunks
+              {/* A failed chunk is lost facts, not a slow one, and it used to
+                * only ever reach container stdout. */}
+              {progress.scrape.chunksFailed > 0 && (
+                <span className="text-red-500">
+                  {' '}
+                  ({progress.scrape.chunksFailed} failed)
+                </span>
+              )}
+            </span>
+          )}
+          {stats && stats.calls > 0 && (
+            <span>
+              {stats.calls} calls · {formatElapsed(stats.modelMs)} in model
+              {stats.errors > 0 && (
+                <span className="text-red-500"> · {stats.errors} failed</span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
 
       <AnimatePresence>
         {isExpanded && (
@@ -261,6 +402,35 @@ const AssistantSteps = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {stats && stats.calls > 0 && (
+        <div className="border-t border-light-200 dark:border-dark-200">
+          <button
+            onClick={() => setShowCalls(!showCalls)}
+            className="w-full flex items-center justify-between p-3 hover:bg-light-200 dark:hover:bg-dark-200 transition duration-200"
+          >
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-black dark:text-white" />
+              <span className="text-sm font-medium text-black dark:text-white">
+                Tool calls ({stats.calls})
+              </span>
+            </div>
+            {showCalls ? (
+              <ChevronUp className="w-4 h-4 text-black/70 dark:text-white/70" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-black/70 dark:text-white/70" />
+            )}
+          </button>
+
+          {/* Mounted only when open: it fetches every call row for the message,
+            * and a chat can hold many of these panels. */}
+          {showCalls && (
+            <div className="px-3 pb-3">
+              <LlmCallTimeline messageId={messageId} isRunning={isRunning} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -20,6 +20,9 @@ export interface Message extends BaseMessage {
   query: string;
   responseBlocks: Block[];
   status: 'answering' | 'completed' | 'error';
+  /* Which length this answer was written at, so the rewrite control can show
+   * which one is current. Absent on messages written before it was recorded. */
+  answerStyle?: 'brief' | 'standard' | 'deep' | null;
 }
 
 export interface File {

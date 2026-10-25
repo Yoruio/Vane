@@ -52,8 +52,10 @@ export const searchSearxng = async (
 
     const data = await res.json();
 
-    const results: SearxngSearchResult[] = data.results;
-    const suggestions: string[] = data.suggestions;
+    /* From upstream #1093: an error response or an engine returning nothing
+     * omits these, and the caller maps over them unconditionally. */
+    const results: SearxngSearchResult[] = data.results ?? [];
+    const suggestions: string[] = data.suggestions ?? [];
 
     return { results, suggestions };
   } catch (err: any) {

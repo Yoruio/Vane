@@ -28,6 +28,15 @@ export type Section = {
   suggestions?: string[];
 };
 
+/* Aggregate of the llm_calls rows for the running message, polled while a
+ * search is in flight. Read from the telemetry API rather than pushed, so the
+ * agent and the instrumentation decorator stay decoupled from the UI. */
+type CallStats = {
+  calls: number;
+  errors: number;
+  modelMs: number;
+};
+
 type ChatContext = {
   messages: Message[];
   sections: Section[];
@@ -37,6 +46,7 @@ type ChatContext = {
   sources: string[];
   chatId: string | undefined;
   optimizationMode: string;
+  answerStyle: string;
   isMessagesLoaded: boolean;
   loading: boolean;
   notFound: boolean;
@@ -46,8 +56,10 @@ type ChatContext = {
   chatModelProvider: ChatModelProvider;
   embeddingModelProvider: EmbeddingModelProvider;
   researchEnded: boolean;
+  callStats: CallStats | null;
   setResearchEnded: (ended: boolean) => void;
   setOptimizationMode: (mode: string) => void;
+  setAnswerStyle: (style: string) => void;
   setSources: (sources: string[]) => void;
   setFiles: (files: File[]) => void;
   setFileIds: (fileIds: string[]) => void;
@@ -238,7 +250,44 @@ const loadMessages = async (
   setIsMessagesLoaded(true);
 };
 
-export const chatContext = createContext<ChatContext>({
+export /**
+ * Dispatches the complete NDJSON lines in `buffer` and returns the trailing
+ * fragment to carry into the next read.
+ *
+ * The previous version split the whole buffer, dispatched every line, and
+ * cleared the buffer only if none of them threw -- but a network chunk almost
+ * always ends mid-line, so `JSON.parse` threw on that last fragment *after*
+ * the earlier lines had been dispatched, and the buffer was never cleared.
+ * Every subsequent read therefore re-dispatched every event seen so far: one
+ * observed run streamed 558 events, which is ~155,000 dispatches, each a React
+ * state update mapping over the message list and its blocks. The answer
+ * streamed correctly on the wire and appeared in the UI all at once at the end.
+ */
+const consumeNdjson = (
+  buffer: string,
+  onEvent: (data: any) => void,
+): string => {
+  const lines = buffer.split('\n');
+  /* The last element is either an incomplete line or '' when the chunk ended
+   * on a newline. Either way it is not ours to dispatch yet. */
+  const remainder = lines.pop() ?? '';
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    try {
+      onEvent(JSON.parse(line));
+    } catch {
+      /* A *complete* line that does not parse is a server-side problem, not a
+       * framing one. Skip it rather than stalling the rest of the stream. */
+      console.warn('Discarding unparseable stream line');
+    }
+  }
+
+  return remainder;
+};
+
+const chatContext = createContext<ChatContext>({
   chatHistory: [],
   chatId: '',
   fileIds: [],
@@ -253,15 +302,18 @@ export const chatContext = createContext<ChatContext>({
   sections: [],
   notFound: false,
   optimizationMode: '',
+  answerStyle: 'auto',
   chatModelProvider: { key: '', providerId: '' },
   embeddingModelProvider: { key: '', providerId: '' },
   researchEnded: false,
+  callStats: null,
   rewrite: () => {},
   sendMessage: async () => {},
   setFileIds: () => {},
   setFiles: () => {},
   setSources: () => {},
   setOptimizationMode: () => {},
+  setAnswerStyle: () => {},
   setChatModelProvider: () => {},
   setEmbeddingModelProvider: () => {},
   setResearchEnded: () => {},
@@ -280,15 +332,75 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [messageAppeared, setMessageAppeared] = useState(false);
 
   const [researchEnded, setResearchEnded] = useState(false);
+  const [callStats, setCallStats] = useState<CallStats | null>(null);
 
   const chatHistory = useRef<[string, string][]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
+
+  const activeMessageId = useMemo(
+    () =>
+      [...messages].reverse().find((m) => m.status === 'answering')?.messageId,
+    [messages],
+  );
+
+  /* Poll the telemetry aggregate while a search is running so the research
+   * panel can show call count and time spent in the model. Stops as soon as
+   * the run ends; 2s is frequent enough to look live without hammering the
+   * database on a multi-hour quality run. */
+  useEffect(() => {
+    if (!loading || researchEnded) {
+      setCallStats(null);
+      return;
+    }
+
+    if (!activeMessageId) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/debug/llm-calls?messageId=${encodeURIComponent(activeMessageId)}&summary=1`,
+        );
+        const data = await res.json();
+        if (!cancelled && data.summary) setCallStats(data.summary);
+      } catch {
+        /* A failed poll is cosmetic; keep the last value and try again. */
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    /* Depends on the id, not on `messages`: that array changes on every
+     * streamed block, which would re-create the interval and re-poll each
+     * time. */
+  }, [loading, researchEnded, activeMessageId]);
+
 
   const [files, setFiles] = useState<File[]>([]);
   const [fileIds, setFileIds] = useState<string[]>([]);
 
   const [sources, setSources] = useState<string[]>(['web']);
   const [optimizationMode, setOptimizationMode] = useState('speed');
+
+  /* Shares its key with the Preferences setting, so the inline slider and the
+   * settings dropdown are two views of one value. Read lazily because
+   * localStorage does not exist during server render. */
+  const [answerStyle, setAnswerStyleState] = useState('auto');
+
+  useEffect(() => {
+    setAnswerStyleState(localStorage.getItem('answerStyle') ?? 'auto');
+  }, []);
+
+  const setAnswerStyle = (style: string) => {
+    setAnswerStyleState(style);
+    localStorage.setItem('answerStyle', style);
+  };
 
   const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
 
@@ -440,19 +552,14 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             if (done) break;
 
             partialChunk += decoder.decode(value, { stream: true });
-
-            try {
-              const messages = partialChunk.split('\n');
-              for (const msg of messages) {
-                if (!msg.trim()) continue;
-                const json = JSON.parse(msg);
-                messageHandler(json);
-              }
-              partialChunk = '';
-            } catch (error) {
-              console.warn('Incomplete JSON, waiting for next chunk...');
-            }
+            partialChunk = consumeNdjson(partialChunk, messageHandler);
           }
+
+            /* A last line with no trailing newline would otherwise be dropped.
+             * The decoder is flushed too, in case the chunk ended mid-codepoint. */
+            partialChunk += decoder.decode();
+            consumeNdjson(partialChunk + '\n', messageHandler);
+            partialChunk = '';
         } finally {
           isReconnectingRef.current = false;
         }
@@ -758,6 +865,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         files: fileIds,
         sources: sources,
         optimizationMode: optimizationMode,
+        /* Omitted when set to "auto", which lets the server apply the mode's
+         * own default rather than this client hardcoding the mapping. */
+        ...(answerStyle && answerStyle !== 'auto' ? { answerStyle } : {}),
         history: rewrite
           ? chatHistory.current.slice(
               0,
@@ -791,18 +901,13 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
 
       partialChunk += decoder.decode(value, { stream: true });
 
-      try {
-        const messages = partialChunk.split('\n');
-        for (const msg of messages) {
-          if (!msg.trim()) continue;
-          const json = JSON.parse(msg);
-          messageHandler(json);
-        }
-        partialChunk = '';
-      } catch (error) {
-        console.warn('Incomplete JSON, waiting for next chunk...');
-      }
+      partialChunk = consumeNdjson(partialChunk, messageHandler);
     }
+
+    /* A last line with no trailing newline would otherwise be dropped. The
+     * decoder is flushed too, in case the chunk ended mid-codepoint. */
+    partialChunk += decoder.decode();
+    consumeNdjson(partialChunk + '\n', messageHandler);
   };
 
   return (
@@ -822,10 +927,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         messageAppeared,
         notFound,
         optimizationMode,
+        answerStyle,
         setFileIds,
         setFiles,
         setSources,
         setOptimizationMode,
+        setAnswerStyle,
         rewrite,
         sendMessage,
         setChatModelProvider,
@@ -833,6 +940,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         embeddingModelProvider,
         setEmbeddingModelProvider,
         researchEnded,
+        callStats,
         setResearchEnded,
       }}
     >

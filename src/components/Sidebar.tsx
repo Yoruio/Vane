@@ -92,7 +92,10 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
                     link.active
                       ? 'text-black/80 dark:text-white/80'
                       : 'text-black/60 dark:text-white/60',
-                    'text-[10px]',
+                    /* The rail leaves ~56px for a label, so a two-word label
+                       wraps; without text-center the wrapped lines sit left of
+                       the icon above them. */
+                    'text-[10px] text-center',
                   )}
                 >
                   {link.label}

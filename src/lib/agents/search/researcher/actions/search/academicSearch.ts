@@ -47,6 +47,8 @@ const academicSearchAction: ResearchAction<typeof schema> = {
       queries: input.queries,
       researchBlock: researchBlock,
       session: additionalConfig.session,
+      callContext: additionalConfig.callContext,
+      contextPerRequest: additionalConfig.contextPerRequest,
       searchConfig: {
         engines: ['arxiv', 'google scholar', 'pubmed'],
       },

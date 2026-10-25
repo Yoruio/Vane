@@ -2,6 +2,7 @@ import z from 'zod';
 import { Widget } from '../types';
 import YahooFinance from 'yahoo-finance2';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
+import { withRole } from '@/lib/models/base/instrumented';
 
 const yf = new YahooFinance({
   suppressNotices: ['yahooSurvey'],
@@ -53,7 +54,9 @@ const stockWidget: Widget = {
   shouldExecute: (classification) =>
     classification.classification.showStockWidget,
   execute: async (input) => {
-    const output = await input.llm.generateObject<typeof schema>({
+    const output = await withRole(input.llm, 'widget').generateObject<
+      typeof schema
+    >({
       messages: [
         {
           role: 'system',

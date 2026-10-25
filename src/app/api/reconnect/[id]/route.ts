@@ -1,4 +1,7 @@
 import SessionManager from '@/lib/session';
+import db from '@/lib/db';
+import { messages } from '@/lib/db/schema';
+import { eq } from 'drizzle-orm';
 
 export const POST = async (
   req: Request,
@@ -10,6 +13,14 @@ export const POST = async (
     const session = SessionManager.getSession(id);
 
     if (!session) {
+      /* From upstream #1093. Sessions have a 30 minute TTL, so a reconnect for
+       * a run that outlived it finds nothing -- and the row would otherwise
+       * stay 'answering' for good. */
+      await db
+        .update(messages)
+        .set({ status: 'error' })
+        .where(eq(messages.backendId, id))
+        .execute();
       return Response.json({ message: 'Session not found' }, { status: 404 });
     }
 

@@ -2,6 +2,12 @@ import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { Mutex } from 'async-mutex';
 
+/* Shorter than this and the page carries no usable information -- a block
+ * page, a consent wall, or a shell that renders its content with JavaScript
+ * Readability cannot run. Measured against the real case: a blocked
+ * lead-generation page yielded 281 characters including the title header. */
+const MIN_USEFUL_CONTENT = 400;
+
 class Scraper {
   private static browser: any | undefined;
   private static IDLE_KILL_TIMEOUT = 30000;
@@ -46,9 +52,12 @@ class Scraper {
     }, this.IDLE_KILL_TIMEOUT);
   }
 
+  /* `ok` distinguishes a real page from the placeholder returned on failure.
+   * Without it callers cannot tell the two apart, because this method resolves
+   * either way rather than throwing. */
   static async scrape(
     url: string,
-  ): Promise<{ content: string; title: string }> {
+  ): Promise<{ content: string; title: string; ok: boolean }> {
     await this.initBrowser();
 
     if (!this.browser) throw new Error('Browser not initialized');
@@ -86,13 +95,28 @@ class Scraper {
       const content = new Readability(dom.window.document).parse();
 
       const title = await page.title();
+      const text = content?.textContent?.trim() ?? '';
+
+      /* Navigating successfully is not the same as reading the page. Sites that
+       * block scrapers answer with an interstitial, so Readability finds almost
+       * nothing and `ok` used to be true anyway: two lead-generation pages
+       * returned 281 characters each and entered the findings as sources.
+       * Anything this short cannot answer a question. */
+      const ok = text.length >= MIN_USEFUL_CONTENT;
+
+      if (!ok) {
+        console.log(
+          `Scraped ${url} but found only ${text.length} characters of text; treating as a failure.`,
+        );
+      }
 
       return {
         content: `
         # ${title ?? 'No title'} - ${url}
-        ${content?.textContent?.trim() ?? 'No content available'}
+        ${text || 'No content available'}
         `,
         title,
+        ok,
       };
     } catch (err) {
       console.log(`Error scraping ${url}:`, err);
@@ -100,6 +124,7 @@ class Scraper {
       return {
         title: 'Failed to scrape',
         content: `# ${url}\n\nError scraping content.`,
+        ok: false,
       };
     } finally {
       this.userCount--;

@@ -4,6 +4,8 @@ import { getConfiguredModelProviders } from '../config/serverRegistry';
 import { providers } from './providers';
 import { MinimalProvider, ModelList } from './types';
 import configManager from '../config';
+import InstrumentedLLM from './base/instrumented';
+import InstrumentedEmbedding from './base/instrumentedEmbedding';
 
 class ModelRegistry {
   activeProviders: (ConfigModelProvider & {
@@ -71,24 +73,56 @@ class ModelRegistry {
     return providers;
   }
 
-  async loadChatModel(providerId: string, modelName: string) {
+  /**
+   * `callContext` opts the returned model into per-call telemetry (one
+   * `llm_calls` row per request). Omit it and the model is returned unwrapped,
+   * so callers that do not care are unaffected.
+   */
+  async loadChatModel(
+    providerId: string,
+    modelName: string,
+    callContext?: { messageId?: string; chatId?: string },
+  ) {
     const provider = this.activeProviders.find((p) => p.id === providerId);
 
     if (!provider) throw new Error('Invalid provider id');
 
     const model = await provider.provider.loadChatModel(modelName);
 
-    return model;
+    if (!callContext) return model;
+
+    return new InstrumentedLLM(model, {
+      ...callContext,
+      provider: provider.name,
+      model: modelName,
+      captureText:
+        configManager.getConfig('debug.captureLlmText', false) === true,
+    });
   }
 
-  async loadEmbeddingModel(providerId: string, modelName: string) {
+  /* Same opt-in as loadChatModel: embedding is a real cost in a run -- every
+   * search result gets embedded -- and it was the last work missing from the
+   * timeline. */
+  async loadEmbeddingModel(
+    providerId: string,
+    modelName: string,
+    callContext?: { messageId?: string; chatId?: string },
+  ) {
     const provider = this.activeProviders.find((p) => p.id === providerId);
 
     if (!provider) throw new Error('Invalid provider id');
 
     const model = await provider.provider.loadEmbeddingModel(modelName);
 
-    return model;
+    if (!callContext) return model;
+
+    return new InstrumentedEmbedding(model, {
+      ...callContext,
+      provider: provider.name,
+      model: modelName,
+      captureText:
+        configManager.getConfig('debug.captureLlmText', false) === true,
+    });
   }
 
   async addProvider(

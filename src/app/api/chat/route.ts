@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import ModelRegistry from '@/lib/models/registry';
+import { ensureModelReady } from '@/lib/models/preload';
 import { ModelWithProvider } from '@/lib/models/types';
 import SearchAgent from '@/lib/agents/search';
 import SessionManager from '@/lib/session';
@@ -36,6 +37,10 @@ const bodySchema = z.object({
   optimizationMode: z.enum(['speed', 'balanced', 'quality'], {
     message: 'Optimization mode must be one of: speed, balanced, quality',
   }),
+  /* How much prose to write, separate from how much research to do. Omitted
+   * means "follow the mode", which is what the UI sends unless the user has
+   * chosen a style explicitly. */
+  answerStyle: z.enum(['brief', 'standard', 'deep']).optional(),
   sources: z.array(z.string()).optional().default([]),
   history: z
     .array(z.tuple([z.string(), z.string()]))
@@ -128,12 +133,34 @@ export const POST = async (req: Request) => {
     const registry = new ModelRegistry();
 
     const [llm, embedding] = await Promise.all([
-      registry.loadChatModel(body.chatModel.providerId, body.chatModel.key),
+      registry.loadChatModel(body.chatModel.providerId, body.chatModel.key, {
+        messageId: body.message.messageId,
+        chatId: body.message.chatId,
+      }),
       registry.loadEmbeddingModel(
         body.embeddingModel.providerId,
         body.embeddingModel.key,
+        { messageId: body.message.messageId, chatId: body.message.chatId },
       ),
     ]);
+
+    // Resolve the provider's display name so the stored row survives a later
+    // rename or removal; fall back to the raw id if it cannot be resolved.
+    const chatProvider = registry.activeProviders.find(
+      (p) => p.id === body.chatModel.providerId,
+    );
+
+    /* Confirm the weights are resident before anything calls the model, so a
+     * cold local model does not surface as a 34s classifier. No-op for
+     * providers with nothing to load. */
+    const modelReady = await ensureModelReady(
+      body.chatModel.providerId,
+      body.chatModel.key,
+      {
+        messageId: body.message.messageId,
+        chatId: body.message.chatId,
+      },
+    );
 
     const history: ChatTurnMessage[] = body.history.map((msg) => {
       if (msg[0] === 'human') {
@@ -221,8 +248,14 @@ export const POST = async (req: Request) => {
           embedding: embedding,
           sources: body.sources as SearchSources[],
           mode: body.optimizationMode,
+          answerStyle: body.answerStyle,
           fileIds: body.files,
           systemInstructions: body.systemInstructions || 'None',
+          contextPerRequest: modelReady.contextPerSlot,
+          chatModel: {
+            provider: chatProvider?.name || body.chatModel.providerId,
+            model: body.chatModel.key,
+          },
         },
       })
       .catch((err) => {

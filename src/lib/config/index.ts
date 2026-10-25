@@ -19,6 +19,7 @@ class ConfigManager {
     search: {
       searxngURL: '',
     },
+    debug: {},
   };
   uiConfigSections: UIConfigSections = {
     preferences: [
@@ -58,6 +59,34 @@ class ConfigManager {
         required: false,
         description: 'Choose between Metric  and Imperial measurement unit.',
         default: 'Metric',
+        scope: 'client',
+      },
+      {
+        name: 'Answer length',
+        key: 'answerStyle',
+        type: 'select',
+        options: [
+          {
+            name: 'Match research depth',
+            value: 'auto',
+          },
+          {
+            name: 'Brief — answer the question',
+            value: 'brief',
+          },
+          {
+            name: 'Standard — short, light structure',
+            value: 'standard',
+          },
+          {
+            name: 'Deep — full written report',
+            value: 'deep',
+          },
+        ],
+        required: false,
+        description:
+          'How much prose to write, separate from how much searching to do. "Match research depth" uses brief for speed, standard for balanced and deep for quality.',
+        default: 'auto',
         scope: 'client',
       },
       {
@@ -112,6 +141,40 @@ class ConfigManager {
         default: '',
         scope: 'server',
         env: 'SEARXNG_API_URL',
+      },
+      {
+        name: 'Scrape chunk size (tokens)',
+        key: 'chunkTokens',
+        type: 'string',
+        required: false,
+        description:
+          'A scraped page is split into chunks of this size and each one is sent to the model separately. Leave empty to size each chunk to what one request to the current model can actually hold, which is the safer default because the usable window depends on how many parallel slots the server was started with. Set a number to override that.',
+        placeholder: '4000',
+        default: '4000',
+        scope: 'server',
+      },
+      {
+        name: 'Max chunks per page',
+        key: 'maxChunksPerPage',
+        type: 'string',
+        required: false,
+        description:
+          'Stop after this many chunks of a page. Reading a long page can cost several minutes on a local model, and the chunks after the first few are usually navigation and footers. Content past the limit is discarded, so raise it if answers start missing detail. Set 0 to read the whole page.',
+        placeholder: '3',
+        default: '3',
+        scope: 'server',
+      },
+    ],
+    debug: [
+      {
+        name: 'Capture model prompts and responses',
+        key: 'captureLlmText',
+        type: 'switch',
+        required: false,
+        description:
+          'Store the full prompt and response of every model call. Timing and size are always recorded; this adds the text, which is large — one search can make hundreds of calls. Leave off unless investigating something.',
+        default: false,
+        scope: 'server',
       },
     ],
   };

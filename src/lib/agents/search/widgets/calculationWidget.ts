@@ -2,6 +2,7 @@ import z from 'zod';
 import { Widget } from '../types';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
 import { exp, evaluate as mathEval } from 'mathjs';
+import { withRole } from '@/lib/models/base/instrumented';
 
 const schema = z.object({
   expression: z
@@ -37,7 +38,9 @@ const calculationWidget: Widget = {
   shouldExecute: (classification) =>
     classification.classification.showCalculationWidget,
   execute: async (input) => {
-    const output = await input.llm.generateObject<typeof schema>({
+    const output = await withRole(input.llm, 'widget').generateObject<
+      typeof schema
+    >({
       messages: [
         {
           role: 'system',

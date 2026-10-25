@@ -5,6 +5,8 @@ import SessionManager from '@/lib/session';
 import { Message, ReasoningResearchBlock } from '@/lib/types';
 import formatChatHistoryAsString from '@/lib/utils/formatHistory';
 import { ToolCall } from '@/lib/models/types';
+import { patchProgress, setCurrent } from './progress';
+import { withRole } from '@/lib/models/base/instrumented';
 
 class Researcher {
   async research(
@@ -34,15 +36,39 @@ class Researcher {
         sources: input.config.sources,
       });
 
-    const researchBlockId = crypto.randomUUID();
+    const researchBlockId = input.researchBlockId ?? crypto.randomUUID();
 
-    session.emitBlock({
-      id: researchBlockId,
-      type: 'research',
-      data: {
-        subSteps: [],
-      },
-    });
+    if (session.getBlock(researchBlockId)) {
+      /* The agent created it before classification, so the status line could
+       * cover that call too; only the budget is still unknown at that point. */
+      patchProgress(session, researchBlockId, (p) => {
+        p.maxIterations = maxIteration;
+      });
+    } else {
+      /* No block handed in -- the API agent does not make one -- so own it. */
+      session.emitBlock({
+        id: researchBlockId,
+        type: 'research',
+        data: {
+          subSteps: [],
+          progress: {
+            startedAt: new Date().toISOString(),
+            mode: input.config.mode,
+            iteration: 0,
+            maxIterations: maxIteration,
+            phase: 'planning',
+            scrape: {
+              inFlight: 0,
+              completed: 0,
+              failed: 0,
+              chunksDone: 0,
+              chunksTotal: 0,
+              chunksFailed: 0,
+            },
+          },
+        },
+      });
+    }
 
     const agentMessageHistory: Message[] = [
       {
@@ -57,6 +83,13 @@ class Researcher {
     ];
 
     for (let i = 0; i < maxIteration; i++) {
+      patchProgress(session, researchBlockId, (p) => {
+        p.iteration = i + 1;
+        p.phase = 'planning';
+        p.current = `Deciding what to do next (step ${i + 1} of ${maxIteration})`;
+        p.currentSince = new Date().toISOString();
+      });
+
       const researcherPrompt = getResearcherPrompt(
         availableActionsDescription,
         input.config.mode,
@@ -65,7 +98,10 @@ class Researcher {
         input.config.fileIds,
       );
 
-      const actionStream = input.config.llm.streamText({
+      const actionStream = withRole(
+        input.config.llm,
+        'orchestrator',
+      ).streamText({
         messages: [
           {
             role: 'system',
@@ -147,11 +183,15 @@ class Researcher {
         }
       }
 
+      /* Three ways out of this loop and they look identical to the browser
+       * otherwise: no tool calls, the done tool, or the budget running out. */
       if (finalToolCalls.length === 0) {
+        patchProgress(session, researchBlockId, (p) => (p.phase = 'done'));
         break;
       }
 
       if (finalToolCalls[finalToolCalls.length - 1].name === 'done') {
+        patchProgress(session, researchBlockId, (p) => (p.phase = 'done'));
         break;
       }
 
@@ -161,10 +201,29 @@ class Researcher {
         tool_calls: finalToolCalls,
       });
 
+      /* finalToolCalls is known before anything runs, so the status line can
+       * name the actual tools rather than a generic phase. */
+      const toolNames = Array.from(
+        new Set(finalToolCalls.map((tc) => tc.name).filter(Boolean)),
+      ).filter((name) => name !== '__reasoning_preamble');
+
+      setCurrent(
+        session,
+        researchBlockId,
+        'searching',
+        toolNames.length ? `Running ${toolNames.join(', ')}` : 'Working',
+      );
+
       const actionResults = await ActionRegistry.executeAll(finalToolCalls, {
         llm: input.config.llm,
         embedding: input.config.embedding,
         session: session,
+        callContext: input.callContext,
+        /* The standalone rewrite rather than the raw follow-up, so a question
+         * like "what about the newer one?" still carries its subject. */
+        query:
+          input.classification.standaloneFollowUp || input.followUp,
+        contextPerRequest: input.config.contextPerRequest,
         researchBlockId: researchBlockId,
         fileIds: input.config.fileIds,
         mode: input.config.mode,
@@ -181,6 +240,14 @@ class Researcher {
         });
       });
     }
+
+    /* Also covers falling out of the loop with the budget exhausted. Every
+     * break path falls through to here, so this is the one place finishedAt
+     * needs setting. */
+    patchProgress(session, researchBlockId, (p) => {
+      p.phase = 'done';
+      p.finishedAt = new Date().toISOString();
+    });
 
     const searchResults = actionOutput
       .filter((a) => a.type === 'search_results')

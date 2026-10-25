@@ -32,6 +32,19 @@ type OpenAIConfig = {
 class OpenAILLM extends BaseLLM<OpenAIConfig> {
   openAIClient: OpenAI;
 
+  /**
+   * Extra request-body fields for this provider.
+   *
+   * Empty here on purpose: how you turn off a model's thinking is
+   * provider-specific, and OpenAI itself rejects fields it does not know. A
+   * subclass that can express it overrides this.
+   */
+  protected extraBody(
+    options?: GenerateOptions,
+  ): Record<string, unknown> {
+    return {};
+  }
+
   constructor(protected config: OpenAIConfig) {
     super(config);
 
@@ -71,6 +84,18 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
     });
   }
 
+  private withReasoning(message: {
+    content?: string | null;
+    reasoning_content?: string;
+  }): string {
+    const reasoning = (
+      message as { reasoning_content?: string }
+    ).reasoning_content;
+    const content = message.content ?? '';
+
+    return reasoning ? `<think>${reasoning}</think>${content}` : content;
+  }
+
   async generateText(input: GenerateTextInput): Promise<GenerateTextOutput> {
     const openaiTools: ChatCompletionTool[] = [];
 
@@ -100,11 +125,16 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
         this.config.options?.frequencyPenalty,
       presence_penalty:
         input.options?.presencePenalty ?? this.config.options?.presencePenalty,
+      ...this.extraBody(input.options),
     });
 
     if (response.choices && response.choices.length > 0) {
       return {
-        content: response.choices[0].message.content!,
+        /* Same split as the streamed path: a reasoning model may answer in
+         * `content` and think in `reasoning_content`, and an empty `content`
+         * with the budget spent thinking is otherwise indistinguishable from a
+         * model that had nothing to say. */
+        content: this.withReasoning(response.choices[0].message),
         toolCalls:
           response.choices[0].message.tool_calls
             ?.map((tc) => {
@@ -173,6 +203,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
             input.options?.presencePenalty ??
             this.config.options?.presencePenalty,
           stream: true,
+          ...this.extraBody(input.options),
         },
         { signal: controller.signal },
       );
@@ -180,12 +211,42 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
       let recievedToolCalls: { name: string; id: string; arguments: string }[] =
         [];
 
+      /* Reasoning models stream their thinking in `reasoning_content`, a field
+       * outside the OpenAI schema, and their answer in `content`. Reading only
+       * `content` means a run that spends its whole budget thinking produces an
+       * empty answer with no error at all. Wrapping the thinking in <think>
+       * tags keeps it, and matches how the app already renders reasoning. */
+      let thinkingOpen = false;
+
       for await (const chunk of stream) {
         resetIdleTimer();
         if (chunk.choices && chunk.choices.length > 0) {
           const toolCalls = chunk.choices[0].delta.tool_calls;
+          const reasoning =
+            (chunk.choices[0].delta as { reasoning_content?: string })
+              .reasoning_content || '';
+          const content = chunk.choices[0].delta.content || '';
+
+          let contentChunk = '';
+
+          if (reasoning) {
+            if (!thinkingOpen) {
+              contentChunk += '<think>';
+              thinkingOpen = true;
+            }
+            contentChunk += reasoning;
+          }
+
+          if (content) {
+            if (thinkingOpen) {
+              contentChunk += '</think>';
+              thinkingOpen = false;
+            }
+            contentChunk += content;
+          }
+
           yield {
-            contentChunk: chunk.choices[0].delta.content || '',
+            contentChunk,
             toolCallChunk:
               toolCalls?.map((tc) => {
                 if (!recievedToolCalls[tc.index]) {
@@ -216,6 +277,12 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
         }
       }
 
+      /* A model that thinks and then stops leaves the tag unclosed, which would
+       * swallow the rest of the message in the renderer. */
+      if (thinkingOpen) {
+        yield { contentChunk: '</think>', toolCallChunk: [], done: true };
+      }
+
       /* The SDK ends the iterator quietly on abort, so surface the stall as an error. */
       if (controller.signal.aborted) {
         throw new Error(
@@ -243,6 +310,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
       presence_penalty:
         input.options?.presencePenalty ?? this.config.options?.presencePenalty,
       response_format: zodResponseFormat(input.schema, 'object'),
+      ...this.extraBody(input.options),
     });
 
     if (response.choices && response.choices.length > 0) {

@@ -107,11 +107,47 @@ export type ResearchBlockSubStep =
   | UploadSearchingResearchBlock
   | UploadSearchResultsResearchBlock;
 
+/* Live status of a run, carried inside the research block rather than on a
+ * channel of its own: the chat route forwards only 'block', 'updateBlock' and
+ * 'researchComplete', and session.subscribe() replays block snapshots, so
+ * anything outside a block is dropped on reconnect. */
+export type ResearchProgress = {
+  /* The client ticks elapsed time from this; the server never pushes per-second
+   * updates. */
+  startedAt: string;
+  /* Set when the loop ends, so a finished run can still report how long it
+   * took; without it a reopened chat has nothing to measure against. */
+  finishedAt?: string;
+  mode: 'speed' | 'balanced' | 'quality';
+  iteration: number;
+  maxIterations: number;
+  phase: 'planning' | 'searching' | 'reading' | 'writing' | 'done';
+  /* What is happening right now, for a status line. The telemetry cannot answer
+   * this: a row is written when a call finishes, so an in-flight call does not
+   * exist in it yet. */
+  current?: string;
+  /* When the current activity started, so the client can age it without the
+   * server pushing updates. */
+  currentSince?: string;
+  scrape: {
+    inFlight: number;
+    completed: number;
+    failed: number;
+    chunksDone: number;
+    chunksTotal: number;
+    /* Chunks whose extraction errored. Counted rather than logged, so a run
+     * that lost facts to model failures does not look like a thin page. */
+    chunksFailed: number;
+  };
+};
+
 export type ResearchBlock = {
   id: string;
   type: 'research';
   data: {
     subSteps: ResearchBlockSubStep[];
+    /* Optional so a block persisted before this existed still parses. */
+    progress?: ResearchProgress;
   };
 };
 

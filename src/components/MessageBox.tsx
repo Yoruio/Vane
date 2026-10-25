@@ -1,7 +1,7 @@
 'use client';
 
 /* eslint-disable @next/next/no-img-element */
-import React, { MutableRefObject } from 'react';
+import React, { MutableRefObject, useEffect, useState } from 'react';
 import { cn } from '@/lib/utils';
 import {
   BookCopy,
@@ -15,6 +15,7 @@ import {
 import Markdown, { MarkdownToJSX, RuleType } from 'markdown-to-jsx';
 import Copy from './MessageActions/Copy';
 import Rewrite from './MessageActions/Rewrite';
+import RewriteAnswer from './RewriteAnswer';
 import MessageSources from './MessageSources';
 import SearchImages from './SearchImages';
 import SearchVideos from './SearchVideos';
@@ -59,7 +60,18 @@ const MessageBox = ({
     chatHistory,
   } = useChat();
 
-  const parsedMessage = section.parsedTextBlocks.join('\n\n');
+  /* A rewrite replaces the answer in place. Held locally so it streams in
+   * without waiting for the section to be rebuilt from the server, and reset
+   * whenever the underlying blocks change. */
+  const [rewritten, setRewritten] = useState<string | null>(null);
+
+  const original = section.parsedTextBlocks.join('\n\n');
+
+  useEffect(() => {
+    setRewritten(null);
+  }, [original]);
+
+  const parsedMessage = rewritten ?? original;
   const speechMessage = section.speechMessage || '';
   const thinkingEnded = section.thinkingEnded;
 
@@ -131,12 +143,15 @@ const MessageBox = ({
           {section.message.responseBlocks
             .filter(
               (block): block is ResearchBlock =>
-                block.type === 'research' && block.data.subSteps.length > 0,
+                block.type === 'research' &&
+                /* Progress alone is enough; speed mode never emits sub-steps. */
+                (block.data.subSteps.length > 0 || !!block.data.progress),
             )
             .map((researchBlock) => (
               <div key={researchBlock.id} className="flex flex-col space-y-2">
                 <AssistantSteps
                   block={researchBlock}
+                  messageId={section.message.messageId}
                   status={section.message.status}
                   isLast={isLast}
                 />
@@ -147,7 +162,9 @@ const MessageBox = ({
             loading &&
             !researchEnded &&
             !section.message.responseBlocks.some(
-              (b) => b.type === 'research' && b.data.subSteps.length > 0,
+              (b) =>
+                b.type === 'research' &&
+                (b.data.subSteps.length > 0 || !!b.data.progress),
             ) && (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-light-secondary dark:bg-dark-secondary border border-light-200 dark:border-dark-200">
                 <Disc3 className="w-4 h-4 text-black dark:text-white animate-spin" />
@@ -193,6 +210,11 @@ const MessageBox = ({
                       <Rewrite
                         rewrite={rewrite}
                         messageId={section.message.messageId}
+                      />
+                      <RewriteAnswer
+                        messageId={section.message.messageId}
+                        current={section.message.answerStyle}
+                        onRewrite={setRewritten}
                       />
                     </div>
                     <div className="flex flex-row items-center -mr-2">

@@ -2,49 +2,13 @@ import z from 'zod';
 import { ResearchAction } from '../../types';
 import { Chunk, ReadingResearchBlock } from '@/lib/types';
 import Scraper from '@/lib/scraper';
-import { splitText } from '@/lib/utils/splitText';
+import { patchProgress } from '../progress';
+import { timeCall } from '@/lib/telemetry';
+import { withRole } from '@/lib/models/base/instrumented';
+import { extractFacts } from '../extract';
+import { hostOf } from '../progress';
 
-const extractorPrompt = `
-                  Assistant is an AI information extractor. Assistant will be shared with scraped information from a website along with the queries used to retrieve that information. Assistant's task is to extract relevant facts from the scraped data to answer the queries.
-            
-                  ## Things to taken into consideration when extracting information:
-                  1. Relevance to the query: The extracted information must dynamically adjust based on the query's intent. If the query asks "What is [X]", you must extract the definition/identity. If the query asks for "[X] specs" or "features", you must provide deep, granular technical details.
-                     - Example: For "What is [Product]", extract the core definition. For "[Product] capabilities", extract every technical function mentioned.
-                  2. Concentrate on extracting factual information that can help in answering the question rather than opinions or commentary. Ignore marketing fluff like "best-in-class" or "seamless."
-                  3. Noise to signal ratio: If the scraped data is noisy (headers, footers, UI text), ignore it and extract only the high-value information. 
-                     - Example: Discard "Click for more" or "Subscribe now" messages.
-                  4. Avoid using filler sentences or words; extract concise, telegram-style information.
-                     - Example: Change "The device features a weight of only 1.2kg" to "Weight: 1.2kg."
-                  5. Duplicate information: If a fact appears multiple times (e.g., in a paragraph and a technical table), merge the details into a single, high-density bullet point to avoid redundancy.
-                  6. Numerical Data Integrity: NEVER summarize or generalize numbers, benchmarks, or table data. Extract raw values exactly as they appear.
-                     - Example: Do not say "Improved coding scores." Say "LiveCodeBench v6: 80.0%."
-            
-                  ## Example
-                  For example, if the query is "What are the health benefits of green tea?" and the scraped data contains various pieces of information about green tea, Assistant should focus on extracting factual information related to the health benefits of green tea such as "Green tea contains antioxidants which can help in reducing inflammation" and ignore irrelevant information such as "Green tea is a popular beverage worldwide".
-                  
-                  It can also remove filler words to reduce the sentence to "Contains antioxidants; reduces inflammation." 
-                  
-                  For tables/numerical data extraction, Assistant should extract the raw numerical data or the content of the table without trying to summarize it to avoid losing important details. For example, if a table lists specific battery life hours for different modes, Assistant should list every mode and its corresponding hour count rather than giving a general average.
-                  
-                  Make sure the extracted facts are in bullet points format to make it easier to read and understand.
-            
-                  ## Output format
-                  Assistant should reply with a JSON object containing a key "extracted_facts" which is a string of the bulleted facts. Return only raw JSON without markdown formatting (no \`\`\`json blocks).
-            
-                  <example_output>
-                  {
-                    "extracted_facts": "- Fact 1\n- Fact 2\n- Fact 3"
-                  }
-                  </example_output>
-                  `;
 
-const extractorSchema = z.object({
-  extracted_facts: z
-    .string()
-    .describe(
-      'The extracted facts that are relevant to the query and can help in answering the question should be listed here in a concise manner.',
-    ),
-});
 
 const schema = z.object({
   urls: z.array(z.string()).describe('A list of URLs to scrape content from.'),
@@ -79,7 +43,50 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
     await Promise.all(
       params.urls.map(async (url) => {
         try {
-          const scraped = await Scraper.scrape(url);
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => {
+              p.phase = 'reading';
+              p.scrape.inFlight++;
+              /* Host rather than the full URL: this is a one-line status, and a
+               * long URL pushes the counters off the end of it. */
+              p.current = `Reading ${hostOf(url)}`;
+              p.currentSince = new Date().toISOString();
+            },
+          );
+
+          /* finally, because scrape() can still throw before its own try
+           * (an uninitialised browser) and a leaked inFlight never recovers. */
+          let scraped;
+          try {
+            scraped = await timeCall(
+              additionalConfig.callContext,
+              { kind: 'scrape', method: 'playwright', label: url },
+              () => Scraper.scrape(url),
+              (r) => (r.ok ? `${r.content.length} chars` : 'failed'),
+            );
+          } finally {
+            patchProgress(
+              additionalConfig.session,
+              additionalConfig.researchBlockId,
+              (p) => p.scrape.inFlight--,
+            );
+          }
+
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => {
+              if (scraped.ok) p.scrape.completed++;
+              else p.scrape.failed++;
+            },
+          );
+
+          /* A page that could not be read is not a source. Extracting from the
+           * stub wastes a model call and puts an empty "finding" in front of
+           * the writer, which is how two blocked pages became citations. */
+          if (!scraped.ok) return;
 
           if (
             !readingEmitted &&
@@ -144,42 +151,30 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             );
           }
 
-          const chunks = splitText(scraped.content, 4000, 500);
+          /* fallbackToRaw: this tool runs because the user named a URL, so
+           * handing back unextracted page text beats handing back nothing.
+           * The search action makes the opposite choice and drops the source. */
+          const extraction = await extractFacts({
+            llm: additionalConfig.llm,
+            content: scraped.content,
+            queries: [additionalConfig.query ?? 'Summarize'],
+            session: additionalConfig.session,
+            researchBlockId: additionalConfig.researchBlockId,
+            contextPerRequest: additionalConfig.contextPerRequest,
+            fallbackToRaw: true,
+          });
 
-          let accumulatedContent = '';
+          const accumulatedContent = extraction.content;
 
-          if (chunks.length > 1) {
-            try {
-              await Promise.all(
-                chunks.map(async (chunk) => {
-                  const extracted = await additionalConfig.llm.generateObject<
-                    typeof extractorSchema
-                  >({
-                    messages: [
-                      {
-                        role: 'system',
-                        content: extractorPrompt,
-                      },
-                      {
-                        role: 'user',
-                        content: `<queries>Summarize</queries>\n<scraped_data>${chunk}</scraped_data>`,
-                      },
-                    ],
-                    schema: extractorSchema,
-                  });
-
-                  accumulatedContent += extracted.extracted_facts + '\n';
-                }),
-              );
-            } catch (err) {
-              console.log(
-                'Error during extraction, falling back to raw content',
-                err,
-              );
-              accumulatedContent = chunks[0];
-            }
-          } else {
-            accumulatedContent = scraped.content;
+          if (extraction.rawFallback) {
+            console.error(
+              `Extraction failed on every chunk of ${params.urls}; returning raw page text. ` +
+                `${extraction.chunksFailed}/${extraction.chunksTotal} chunks failed.`,
+            );
+          } else if (extraction.chunksFailed > 0) {
+            console.error(
+              `Partial extraction: ${extraction.chunksFailed} of ${extraction.chunksTotal} chunks failed.`,
+            );
           }
 
           results.push({
@@ -190,6 +185,12 @@ const scrapeURLAction: ResearchAction<typeof schema> = {
             },
           });
         } catch (error) {
+          patchProgress(
+            additionalConfig.session,
+            additionalConfig.researchBlockId,
+            (p) => p.scrape.failed++,
+          );
+
           results.push({
             content: `Failed to fetch content from ${url}: ${error}`,
             metadata: {

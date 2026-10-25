@@ -27,7 +27,8 @@ const uploadsSearchAction: ResearchAction<typeof schema> = {
   Never use this tool to search the web or for information that is not contained within the user's uploaded files.
   `,
   execute: async (input, additionalConfig) => {
-    input.queries = input.queries.slice(0, 3);
+    /* From upstream #1093: the model can omit the argument entirely. */
+    input.queries = (input.queries ?? []).slice(0, 3);
 
     const researchBlock = additionalConfig.session.getBlock(
       additionalConfig.researchBlockId,
