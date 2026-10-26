@@ -82,7 +82,7 @@ const MessageInput = () => {
       )}
     >
       {mode === 'single' && (
-        <div className="flex flex-row items-center space-x-1 shrink-0">
+        <div className="flex flex-row items-center shrink-0">
           <AttachSmall />
           <AnswerLength />
         </div>
