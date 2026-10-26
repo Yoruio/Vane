@@ -17,9 +17,6 @@ ALTER TABLE messages ADD COLUMN provider TEXT;--> statement-breakpoint
 ALTER TABLE messages ADD COLUMN model TEXT;--> statement-breakpoint
 ALTER TABLE messages ADD COLUMN mode TEXT;--> statement-breakpoint
 ALTER TABLE messages ADD COLUMN answerStyle TEXT;--> statement-breakpoint
--- Exactly what the writer was given, so an answer can be rewritten at a
--- different length without repeating the research.
-ALTER TABLE messages ADD COLUMN writerContext TEXT;--> statement-breakpoint
 
 -- One row per model call, search, page fetch, embedding or model load. A
 -- single search makes hundreds of these.

@@ -54,7 +54,7 @@ const MAX_REPEATED_CHARS = 300;
 /* The trailing run of one repeated character in `text`, and whether the whole
  * chunk is that character -- which is what decides if a run carries over from
  * the previous chunk. */
-const trailingRun = (text: string) => {
+export const trailingRun = (text: string) => {
   const char = text[text.length - 1];
   let run = 0;
 

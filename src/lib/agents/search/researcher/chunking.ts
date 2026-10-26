@@ -2,7 +2,7 @@ import configManager from '@/lib/config';
 import { splitText } from '@/lib/utils/splitText';
 
 const DEFAULT_CHUNK_TOKENS = 4000;
-const DEFAULT_MAX_CHUNKS = 3;
+export const DEFAULT_MAX_CHUNKS = 3;
 
 /* What a request needs on top of the chunk itself: the extractor's system
  * prompt and query, its own output, and slack for tokeniser disagreement
@@ -23,7 +23,7 @@ export const REQUEST_OVERHEAD_TOKENS = 2000;
  * Auto-sizing therefore only ever shrinks: it protects against a slot too
  * small for a chunk, and never pushes a chunk past a size already known to
  * work. */
-const AUTO_CHUNK_CEILING = 4000;
+export const AUTO_CHUNK_CEILING = 4000;
 
 /* Below this, chunks are too small to extract anything coherent from. */
 export const AUTO_CHUNK_FLOOR = 1000;

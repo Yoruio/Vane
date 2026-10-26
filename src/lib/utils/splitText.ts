@@ -63,6 +63,22 @@ export const splitText = (
       .slice(overlapStartIndex, chunkStart)
       .join('');
 
+    /* A single segment larger than maxTokens makes the inner loop break
+     * immediately, leaving chunkEnd === chunkStart. Without this the outer
+     * loop never advances: it spins forever pushing empty strings until the
+     * process dies -- observed as a 169 MB allocation and a V8 fatal error on
+     * a 200 KB page with no sentence punctuation, which is what minified text,
+     * a code block or a wide table looks like.
+     *
+     * Take the oversized segment on its own. It exceeds the per-request
+     * budget, so the caller may still have to reject it, but one too-large
+     * chunk is a problem the caller can see and handle. */
+    if (chunkEnd === chunkStart) {
+      result.push(segments[chunkStart]);
+      chunkStart += 1;
+      continue;
+    }
+
     const chunkContent = segments.slice(chunkStart, chunkEnd).join('');
 
     result.push(overlapBeforeContent + chunkContent);
